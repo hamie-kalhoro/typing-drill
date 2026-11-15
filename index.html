@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>typingDrill by HAMiD</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <meta name="theme-color" content="#c96442">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ Sidebar ============ -->
+  <aside class="sidebar">
+    <div class="logo">
+      <!-- Live logo: caret blinks, streaks drift, and the keycap presses on every keystroke -->
+      <svg class="logo-mark" id="logoMark" viewBox="0 0 64 64" aria-hidden="true">
+        <defs>
+          <linearGradient id="lgBg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#e08a69"/><stop offset="1" stop-color="#b9532f"/>
+          </linearGradient>
+          <linearGradient id="lgCap" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#f3efe6"/>
+          </linearGradient>
+        </defs>
+        <rect width="64" height="64" rx="15" fill="url(#lgBg)"/>
+        <rect x="1" y="1" width="62" height="62" rx="14" fill="none" stroke="#fff" stroke-opacity="0.18" stroke-width="2"/>
+        <g class="lg-streaks" stroke="#fff" stroke-linecap="round" stroke-width="3">
+          <line x1="6" y1="24" x2="12" y2="24" stroke-opacity="0.55"/>
+          <line x1="4" y1="32" x2="12" y2="32" stroke-opacity="0.85"/>
+          <line x1="7" y1="40" x2="12" y2="40" stroke-opacity="0.55"/>
+        </g>
+        <rect x="16" y="15" width="38" height="38" rx="9" fill="#8f3e22" fill-opacity="0.45"/>
+        <g class="lg-cap">
+          <rect x="16" y="11" width="38" height="37" rx="9" fill="url(#lgCap)"/>
+          <path fill="#b9532f" d="M24 18.5h22v6h-2.6l-1-2.8H37.2v16.6l2.8 1.1V42H30v-2.6l2.8-1.1V21.7h-5.2l-1 2.8H24z"/>
+          <rect class="lg-caret" x="44" y="30" width="3" height="12" rx="1.5" fill="#d97757"/>
+        </g>
+      </svg>
+      <div class="logo-text"><strong>typingDrill</strong><span>by HAMiD</span></div>
+    </div>
+
+    <nav class="nav" id="tabs">
+      <p class="nav-label">Practice</p>
+      <button data-mode="plan">
+        <svg viewBox="0 0 24 24"><path d="M4 22V4"/><path d="M4 4h12l-2 4 2 4H4"/></svg>
+        <span>60 WPM Plan</span>
+      </button>
+      <button data-mode="stories" class="active">
+        <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>
+        <span>Stories</span>
+      </button>
+      <button data-mode="tough">
+        <svg viewBox="0 0 24 24"><path d="M12 2l3 7h7l-5.5 4.5 2 7.5L12 16.5 5.5 21l2-7.5L2 9h7z"/></svg>
+        <span>Tough-Word Stories</span>
+      </button>
+      <button data-mode="drill">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>
+        <span>Word Drill</span>
+      </button>
+      <button data-mode="daily">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M9 15l2 2 4-4"/></svg>
+        <span>Daily 10</span>
+      </button>
+      <p class="nav-label">Insights</p>
+      <button data-mode="stats">
+        <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
+        <span>Performance</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="goal-card">
+        <div class="goal-top">
+          <span>Your goal</span>
+          <button id="goalEditBtn" class="goal-edit" title="Edit goals" aria-label="Edit goals">
+            <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          </button>
+        </div>
+        <div class="goal-figures"><strong id="goalWpmLabel">60 WPM</strong><span id="goalAccLabel">at 95% accuracy</span></div>
+        <div class="bar"><div id="goalFill" class="bar-fill"></div></div>
+        <p id="goalText" class="goal-text">No tests yet</p>
+      </div>
+      <div class="theme-switch" id="themeSwitch" role="radiogroup" aria-label="Theme">
+        <button data-theme-v="light" title="Light">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          <span>Light</span>
+        </button>
+        <button data-theme-v="dark" title="Dark">
+          <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+          <span>Dark</span>
+        </button>
+        <button data-theme-v="system" title="Match system">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+          <span>Auto</span>
+        </button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============ Main ============ -->
+  <div class="main">
+    <header class="page-head">
+      <div>
+        <p class="eyebrow" id="pageEyebrow">Practice</p>
+        <h1 id="pageTitle">Stories</h1>
+        <p class="page-sub" id="pageSub"></p>
+      </div>
+      <button id="restartBtn" class="btn btn-primary">
+        <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+        Restart <kbd>Esc</kbd>
+      </button>
+    </header>
+
+    <section id="planPanel" class="hidden">
+      <div class="card plan-hero">
+        <div class="plan-hero-main">
+          <p class="eyebrow" id="planDayLabel"></p>
+          <h2 id="planDayTitle" class="plan-title"></h2>
+          <p class="muted" id="planDayFocus"></p>
+          <div id="planTasks" class="plan-tasks"></div>
+        </div>
+        <div class="plan-hero-side">
+          <div class="plan-stat">
+            <small>Overall progress</small>
+            <strong id="planPct">0%</strong>
+            <div class="bar"><div id="planFill" class="bar-fill"></div></div>
+            <span id="planCount" class="muted small"></span>
+          </div>
+          <div class="plan-stat"><small>This week's target</small><strong id="planTarget"></strong></div>
+          <div class="plan-stat"><small>Best checkpoint</small><strong id="planBest">—</strong></div>
+        </div>
+      </div>
+
+      <div class="plan-weeks" id="planWeeks"></div>
+
+      <div class="card plan-rules">
+        <div class="card-head">
+          <div><h3>Daily routine rules</h3><p class="muted small">About 20–25 minutes a day. Consistency beats long sessions.</p></div>
+          <button id="planReset" class="btn btn-ghost btn-sm danger">Reset plan</button>
+        </div>
+        <ol>
+          <li><strong>Posture first:</strong> back straight, wrists floating, fingers on <kbd>A S D F</kbd> and <kbd>J K L ;</kbd>.</li>
+          <li><strong>Never look at the keyboard.</strong> Slow and blind beats fast and looking.</li>
+          <li><strong>Accuracy before speed:</strong> if accuracy drops below the week's target, slow down.</li>
+          <li><strong>Punctuation counts:</strong> learn where <kbd>"</kbd> <kbd>!</kbd> <kbd>?</kbd> <kbd>'</kbd> <kbd>;</kbd> <kbd>:</kbd> live without looking.</li>
+          <li><strong>Day 7 is checkpoint day:</strong> a timed test against the week's target. Missed it? Repeat the week.</li>
+        </ol>
+      </div>
+    </section>
+
+    <section id="practice">
+      <div class="card plan-banner hidden" id="planBanner">
+        <button id="planBack" class="btn btn-ghost btn-sm">‹ Back to plan</button>
+        <div class="plan-banner-text">
+          <strong id="planBannerTitle"></strong>
+          <span id="planBannerMeta" class="muted small"></span>
+        </div>
+      </div>
+      <div class="toolbar card" id="controls">
+        <label class="field" id="textPickWrap">
+          <span>Text</span>
+          <select id="textPick"></select>
+        </label>
+        <div class="field" id="durationWrap">
+          <span>Duration</span>
+          <div class="segmented" id="durSeg">
+            <button data-v="60">1m</button>
+            <button data-v="120">2m</button>
+            <button data-v="180">3m</button>
+            <button data-v="300">5m</button>
+            <button data-v="0" class="on">Full</button>
+          </div>
+          <select id="duration" class="hidden">
+            <option value="60">1 min</option>
+            <option value="120">2 min</option>
+            <option value="180">3 min</option>
+            <option value="300">5 min</option>
+            <option value="0" selected>Full text</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="dailyPanel" class="card daily hidden">
+        <div class="daily-head">
+          <button id="dPrev" class="btn btn-icon" title="Previous set">‹</button>
+          <div class="daily-title">
+            <h3 id="dTitle"></h3>
+            <div class="daily-dots" id="dDots"></div>
+          </div>
+          <button id="dNext" class="btn btn-icon" title="Next set">›</button>
+        </div>
+        <div id="dWords" class="chips"></div>
+        <div class="daily-steps">
+          <button id="dLook" class="step">
+            <span class="step-n">1</span>
+            <span><strong>Dekh ke likho</strong><small>Type each word 5× while seeing it</small></span>
+          </button>
+          <button id="dBlind" class="step">
+            <span class="step-n">2</span>
+            <span><strong>Bina dekhe likho</strong><small>Word shows for 1.5 s, then hides</small></span>
+          </button>
+        </div>
+        <div class="daily-foot">
+          <span id="dStatus" class="badge"></span>
+          <span class="muted small" id="dRule">Roz 10 words lo. 99% bina dekhe sahi ho jaye to agle 10 pe jao.</span>
+        </div>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi"><span class="kpi-label">Time</span><span class="kpi-value" id="sTime">0:00</span></div>
+        <div class="kpi kpi-hero"><span class="kpi-label">Net WPM</span><span class="kpi-value" id="sWpm">0</span></div>
+        <div class="kpi"><span class="kpi-label">Accuracy</span><span class="kpi-value" id="sAcc">100%</span></div>
+        <div class="kpi"><span class="kpi-label">Wrong words</span><span class="kpi-value" id="sErr">0</span></div>
+      </div>
+
+      <div class="card typing-card" id="typingCard" data-size="l" data-font="plex">
+        <div class="typing-head">
+          <div class="typing-head-left">
+            <h2 id="textTitle" class="text-title"></h2>
+            <span class="muted small"><span id="sProg">0/0</span> words</span>
+          </div>
+          <div class="size-control" title="Font">
+            <span class="muted small">Font</span>
+            <div class="segmented font-seg" id="fontSeg">
+              <button data-font="plex" style="font-family:'IBM Plex Sans',sans-serif" title="IBM Plex Sans: clear, professional (recommended)">Plex</button>
+              <button data-font="exam" style="font-family:Arial,Helvetica,sans-serif" title="Arial: plain exam-screen style">Arial</button>
+              <button data-font="serif" style="font-family:'Source Serif 4',Georgia,serif" title="Source Serif: printed-paper style">Serif</button>
+              <button data-font="mono" style="font-family:'JetBrains Mono',monospace" title="JetBrains Mono: equal-width letters">Mono</button>
+            </div>
+          </div>
+          <div class="size-control" title="Text size">
+            <span class="muted small">Text size</span>
+            <div class="segmented" id="sizeSeg">
+              <button data-size="s" style="font-size:11px">A</button>
+              <button data-size="m" style="font-size:13px">A</button>
+              <button data-size="l" style="font-size:15px">A</button>
+              <button data-size="xl" style="font-size:18px">A</button>
+            </div>
+          </div>
+        </div>
+        <div class="bar thin"><div id="progFill" class="bar-fill"></div></div>
+        <div id="textBox" class="text-box" aria-live="off"></div>
+        <div class="input-wrap">
+          <svg viewBox="0 0 24 24"><path d="M4 17l6-6-6-6M12 19h8"/></svg>
+          <input id="typeInput" class="type-input" type="text" autocomplete="off" autocorrect="off"
+                 autocapitalize="off" spellcheck="false" placeholder="Start typing — the timer starts on your first key">
+        </div>
+        <div class="typing-foot">
+          <span><kbd>Space</kbd> next word</span>
+          <span><kbd>Backspace</kbd> current word only</span>
+          <span><kbd>Esc</kbd> restart</span>
+          <span class="lock">🔒 No going back to previous words</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="statsPanel" class="hidden">
+      <div class="kpis">
+        <div class="kpi"><span class="kpi-label">Tests taken</span><span class="kpi-value" id="kTests">0</span></div>
+        <div class="kpi kpi-hero"><span class="kpi-label">Best WPM</span><span class="kpi-value" id="kBest">0</span></div>
+        <div class="kpi"><span class="kpi-label">Average WPM</span><span class="kpi-value" id="kAvg">0</span></div>
+        <div class="kpi"><span class="kpi-label">Avg accuracy</span><span class="kpi-value" id="kAcc">0%</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><h3>Net WPM trend</h3><p class="muted small" id="chartSub">Last 20 tests, oldest to newest. Dashed line = 60 WPM goal.</p></div>
+        </div>
+        <div id="chart" class="chart"></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-head">
+            <div><h3>Hardest words</h3><p class="muted small">Words you got wrong most often</p></div>
+            <button id="hardDrillBtn" class="btn btn-primary btn-sm">Practice these</button>
+          </div>
+          <div id="hardList" class="chips"></div>
+        </div>
+        <div class="card">
+          <div class="card-head">
+            <div><h3>Recent results</h3><p class="muted small">Saved on this device</p></div>
+            <button id="resetStatsBtn" class="btn btn-ghost btn-sm danger">Reset</button>
+          </div>
+          <div class="table-wrap">
+            <table id="historyTable">
+              <thead><tr><th>Date</th><th>Text</th><th class="num">WPM</th><th class="num">Acc</th><th class="num">Wrong</th><th class="num">Time</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div id="modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="rHeading">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="rHeading">Test complete</h2>
+      <span id="rTarget" class="badge"></span>
+    </div>
+    <div class="result-hero">
+      <div class="result-main"><span id="rWpm">0</span><small>net WPM</small></div>
+      <div class="result-side">
+        <div><small>Accuracy</small><strong id="rAcc"></strong></div>
+        <div><small>Gross WPM</small><strong id="rGross"></strong></div>
+      </div>
+    </div>
+    <p id="rDetail" class="muted"></p>
+    <p id="rDaily" class="callout hidden"></p>
+    <div id="rMistakesWrap">
+      <h4>Mistakes</h4>
+      <div class="table-wrap short">
+        <table id="rMistakes"><thead><tr><th>Expected</th><th>You typed</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button id="rClose" class="btn btn-ghost">Close</button>
+      <button id="rPractice" class="btn btn-secondary">Practice my mistakes</button>
+      <button id="rAgain" class="btn btn-primary">Try again</button>
+    </div>
+  </div>
+</div>
+
+<div id="goalModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="gHeading">
+  <div class="modal-card goal-modal">
+    <div class="modal-head">
+      <div>
+        <h2 id="gHeading">Goal settings</h2>
+        <p class="muted small" style="margin:4px 0 0">Set the targets you are training for. Saved on this device.</p>
+      </div>
+    </div>
+
+    <div class="goal-field">
+      <div class="goal-field-head">
+        <label for="gWpm"><strong>Target speed</strong><span>Net WPM you want to reach</span></label>
+        <div class="num-box"><input id="gWpmNum" type="number" min="10" max="150" step="1"><span>WPM</span></div>
+      </div>
+      <input id="gWpm" type="range" min="10" max="150" step="1">
+      <div class="presets" id="wpmPresets">
+        <button data-v="25">25 · Beginner</button>
+        <button data-v="30">30 · SSC DEO</button>
+        <button data-v="35">35 · SSC CHSL</button>
+        <button data-v="40">40 · Professional</button>
+        <button data-v="45">45 · Advanced</button>
+        <button data-v="60">60 · Expert</button>
+      </div>
+    </div>
+
+    <div class="goal-field">
+      <div class="goal-field-head">
+        <label for="gAcc"><strong>Minimum accuracy</strong><span>A test only counts as passed at or above this</span></label>
+        <div class="num-box"><input id="gAccNum" type="number" min="80" max="100" step="1"><span>%</span></div>
+      </div>
+      <input id="gAcc" type="range" min="80" max="100" step="1">
+    </div>
+
+    <div class="goal-field">
+      <div class="goal-field-head">
+        <label for="gDaily"><strong>Daily 10 unlock accuracy</strong><span>"Bina dekhe" accuracy needed to open the next set</span></label>
+        <div class="num-box"><input id="gDailyNum" type="number" min="90" max="100" step="1"><span>%</span></div>
+      </div>
+      <input id="gDaily" type="range" min="90" max="100" step="1">
+    </div>
+
+    <div class="modal-actions">
+      <button id="gReset" class="btn btn-ghost" style="margin-right:auto">Reset to defaults</button>
+      <button id="gCancel" class="btn btn-ghost">Cancel</button>
+      <button id="gSave" class="btn btn-primary">Save goals</button>
+    </div>
+  </div>
+</div>
+
+<div id="chartTip" class="chart-tip hidden"></div>
+<div id="toast" class="toast"></div>
+
+<script src="texts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
