@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>typingDrill admin setup</title>
+  <style>
+    :root { --bg:#faf9f5; --surface:#fff; --text:#141413; --muted:#73726c; --border:#d6d3c7; --accent:#c96442; --bad:#b53333; --ok:#2e7a4a; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#262624; --surface:#30302e; --text:#faf9f5; --muted:#9c9a92; --border:#4c4b47; --accent:#d97757; --bad:#ec8a80; --ok:#7cc28f; } }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px 16px; background:var(--bg); color:var(--text); font:15px/1.5 "Segoe UI", system-ui, sans-serif; }
+    .card { width:100%; max-width:520px; background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:28px; }
+    h1 { margin:0 0 6px; font-size:22px; }
+    p { color:var(--muted); margin:0 0 18px; }
+    label { display:block; font-size:13px; color:var(--muted); margin:14px 0 6px; }
+    input { width:100%; font:inherit; padding:10px 12px; border-radius:9px; border:1px solid var(--border); background:var(--surface); color:var(--text); }
+    button { margin-top:20px; width:100%; font:inherit; font-weight:600; padding:11px; border:0; border-radius:9px; background:var(--accent); color:#fff; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:wait; }
+    .err { color:var(--bad); font-size:13px; min-height:18px; margin-top:10px; }
+    .ok { color:var(--ok); font-weight:600; }
+    pre { white-space:pre-wrap; word-break:break-all; background:var(--bg); border:1px solid var(--border); border-radius:9px; padding:12px; font-size:12px; }
+    ol { padding-left:20px; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>typingDrill admin setup</h1>
+    <p>Creates <b>admin-config.js</b> for the built-in admin. This page runs entirely in your browser: your password is never uploaded or saved, only a slow hash of it goes into the file.</p>
+
+    <form id="f" autocomplete="off">
+      <label for="name">Admin name (what you'll type to sign in)</label>
+      <input id="name" maxlength="24" required>
+      <label for="pw">Admin password (at least 10 characters; a passphrase is best)</label>
+      <input id="pw" type="password" minlength="10" required>
+      <label for="pw2">Confirm password</label>
+      <input id="pw2" type="password" minlength="10" required>
+      <div class="err" id="err"></div>
+      <button id="go" type="submit">Generate admin-config.js</button>
+    </form>
+
+    <div id="done" hidden>
+      <p class="ok">✔ admin-config.js downloaded.</p>
+      <ol>
+        <li>Move the downloaded <b>admin-config.js</b> into the project folder, replacing the old one.</li>
+        <li>Commit and push it to GitHub.</li>
+        <li>Sign in on any device with your admin name and this password.</li>
+      </ol>
+      <pre id="out"></pre>
+    </div>
+  </div>
+
+<script>
+  // Must match verifyAdmin() in app.js.
+  const ITER = 310000;
+  const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+  async function pbkdf2(password, saltHex, iter) {
+    const salt = new Uint8Array(saltHex.match(/../g).map((h) => parseInt(h, 16)));
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+    return hex(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: iter }, key, 256));
+  }
+
+  document.getElementById("f").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const err = document.getElementById("err");
+    const name = document.getElementById("name").value.trim();
+    const pw = document.getElementById("pw").value;
+    const pw2 = document.getElementById("pw2").value;
+    err.textContent = "";
+    if (!window.crypto || !crypto.subtle) { err.textContent = "This browser can't run the setup here. Open this page in Chrome, Edge or Firefox."; return; }
+    if (!name) { err.textContent = "Please enter a name."; return; }
+    if (pw.length < 10) { err.textContent = "Use at least 10 characters."; return; }
+    if (/^\d+$/.test(pw)) { err.textContent = "Digits-only passwords are easy to crack. Add letters or words."; return; }
+    if (pw !== pw2) { err.textContent = "Passwords don't match."; return; }
+
+    const btn = document.getElementById("go");
+    btn.disabled = true; btn.textContent = "Hashing…";
+    const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+    const salt = hex(saltBytes);
+    const hash = await pbkdf2(pw, salt, ITER);
+
+    const cfg = { name, salt, hash, iter: ITER, created: new Date().toISOString().slice(0, 10) };
+    const file =
+`// Built-in admin for typingDrill: the same admin on every device that loads this site.
+// Holds only a PBKDF2-SHA256 hash of the admin password, never the password itself.
+// Generated by tools/admin-setup.html.
+window.TYPINGDRILL_ADMIN = ${JSON.stringify(cfg, null, 2)};
+`;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([file], { type: "text/javascript" }));
+    a.download = "admin-config.js";
+    document.body.appendChild(a); a.click(); a.remove();
+
+    document.getElementById("out").textContent = file;
+    document.getElementById("f").hidden = true;
+    document.getElementById("done").hidden = false;
+  });
+</script>
+</body>
+</html>

@@ -456,7 +456,8 @@
   };
 
   function setMode(m) {
-    if (m === "admin" && !(currentUser && currentUser.role === "admin")) m = "stories"; // admin-only page
+    // Admin-only pages: the dashboard and the 2-week plan.
+    if ((m === "admin" || m === "plan") && !(currentUser && currentUser.role === "admin")) m = "stories";
     mode = m;
     $("#adminPanel").classList.toggle("hidden", m !== "admin");
     if (m === "admin") {
@@ -1016,8 +1017,39 @@
     return hexOf(a);
   };
 
+  // ---------- built-in admin (same on every device) ----------
+  // Admin rights come ONLY from admin-config.js (shipped with the site), never from
+  // anything stored in the browser, so nobody can create or promote an admin locally.
+  const ADMIN_ID = "admin";
+  const ADMIN_CFG = (() => {
+    const c = window.TYPINGDRILL_ADMIN;
+    const ok = c && typeof c.name === "string" && c.name.trim() && /^[0-9a-f]{16,}$/.test(c.salt || "") &&
+      /^[0-9a-f]{64}$/.test(c.hash || "") && Number(c.iter) >= 100000;
+    return ok ? Object.freeze({ name: c.name.trim(), salt: c.salt, hash: c.hash, iter: Number(c.iter) }) : null;
+  })();
+  const isAdminName = (n) => !!ADMIN_CFG && n.trim().toLowerCase() === ADMIN_CFG.name.toLowerCase();
+  const adminUser = () => ({ id: ADMIN_ID, name: ADMIN_CFG ? ADMIN_CFG.name : "Admin", role: "admin" });
+
+  // Must match tools/admin-setup.html.
+  async function verifyAdmin(password) {
+    if (!ADMIN_CFG || !(window.crypto && crypto.subtle)) return false;
+    try {
+      const salt = new Uint8Array(ADMIN_CFG.salt.match(/../g).map((h) => parseInt(h, 16)));
+      const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+      const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: ADMIN_CFG.iter }, key, 256);
+      const h = hexOf(bits);
+      let diff = 0; // constant-time compare
+      for (let i = 0; i < 64; i++) diff |= h.charCodeAt(i) ^ ADMIN_CFG.hash.charCodeAt(i);
+      return diff === 0;
+    } catch { return false; }
+  }
+
   function touchUser() {
     if (!currentUser) return;
+    if (currentUser.id === ADMIN_ID) {
+      try { localStorage.setItem("u:admin:lastActive", new Date().toISOString()); } catch { /* ignore */ }
+      return;
+    }
     const users = getUsers();
     const u = users.find((x) => x.id === currentUser.id);
     if (u) { u.lastActive = new Date().toISOString(); saveUsers(users); }
@@ -1025,7 +1057,7 @@
 
   // ---------- auth screens ----------
   function showScreen(id) {
-    ["#authSetup", "#authPick", "#authCreate"].forEach((s) => $(s).classList.toggle("hidden", s !== id));
+    ["#authPick", "#authCreate"].forEach((s) => $(s).classList.toggle("hidden", s !== id));
     const first = $(id).querySelector("input");
     if (first) setTimeout(() => first.focus(), 30);
   }
@@ -1060,50 +1092,48 @@
     if (Date.now() < a.until) {
       return shakeAuth("#loginErr", `Too many attempts. Try again in ${Math.ceil((a.until - Date.now()) / 1000)} s.`);
     }
-    const u = getUsers().find((x) => x.hash && x.name.toLowerCase() === key);
-    // Always hash (even for unknown names) so success/failure takes the same time.
-    const h = await hashPin(pin, u ? u.salt : "no-such-user");
-    if (u && h === u.hash) {
+    let signedIn = null;
+    const btn = $("#authPick").querySelector('button[type="submit"]');
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Signing in…";
+    $("#loginErr").textContent = "";
+    if (isAdminName(name)) {
+      // The built-in admin: checked only against admin-config.js (deliberately slow hash).
+      if (await verifyAdmin(pin)) signedIn = adminUser();
+    } else {
+      const u = getUsers().find((x) => x.hash && x.role !== "admin" && x.name.toLowerCase() === key);
+      // Always hash (even for unknown names) so success/failure takes the same time.
+      const h = await hashPin(pin, u ? u.salt : "no-such-user");
+      if (u && h === u.hash) signedIn = { ...u, role: "user" }; // stored data can never grant admin
+    }
+    btn.disabled = false;
+    btn.textContent = label;
+    if (signedIn) {
       delete all[key];
       saveAttempts(all);
-      signIn(u);
+      signIn(signedIn);
       return;
     }
     a.n++;
-    if (a.n >= 5) { a.until = Date.now() + 30000; a.n = 0; }
+    if (a.n >= 5) { a.until = Date.now() + (isAdminName(name) ? 120000 : 30000); a.n = 0; }
     all[key] = a;
     saveAttempts(all);
     $("#loginPin").value = "";
-    shakeAuth("#loginErr", a.until > Date.now() ? "Too many attempts. Locked for 30 seconds." : "Name or PIN is incorrect.");
+    shakeAuth("#loginErr", a.until > Date.now()
+      ? `Too many attempts. Locked for ${Math.ceil((a.until - Date.now()) / 1000)} seconds.`
+      : "Name or PIN is incorrect.");
   });
 
   $("#toCreate").addEventListener("click", () => { $("#authCreate").reset(); $("#newErr").textContent = ""; showScreen("#authCreate"); });
-
-  $("#authSetup").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const name = $("#setupName").value.trim(), p1 = $("#setupPin").value, p2 = $("#setupPin2").value;
-    if (!name) return shakeAuth("#setupErr", "Please enter your name.");
-    if (!validPin(p1)) return shakeAuth("#setupErr", "PIN must be 4 to 8 digits.");
-    if (p1 !== p2) return shakeAuth("#setupErr", "PINs don't match.");
-    const salt = newSalt();
-    const admin = { id: newId(), name, role: "admin", salt, hash: await hashPin(p1, salt), created: new Date().toISOString() };
-    // Move any progress saved before sign-in existed into the admin's profile.
-    USER_KEYS.forEach((k) => {
-      try {
-        const v = localStorage.getItem(k);
-        if (v != null) { localStorage.setItem(`u:${admin.id}:${k}`, v); localStorage.removeItem(k); }
-      } catch { /* ignore */ }
-    });
-    saveUsers([admin]);
-    signIn(admin);
-  });
 
   $("#authCreate").addEventListener("submit", async (e) => {
     e.preventDefault();
     const name = $("#newName").value.trim(), p1 = $("#newPin").value, p2 = $("#newPin2").value;
     const users = getUsers();
     if (!name) return shakeAuth("#newErr", "Please enter a name.");
-    if (users.some((u) => u.name.toLowerCase() === name.toLowerCase())) return shakeAuth("#newErr", "Please choose a different name.");
+    if (isAdminName(name) || name.toLowerCase() === ADMIN_ID ||
+        users.some((u) => u.name.toLowerCase() === name.toLowerCase())) return shakeAuth("#newErr", "Please choose a different name.");
     if (!validPin(p1)) return shakeAuth("#newErr", "PIN must be 4 to 8 digits.");
     if (p1 !== p2) return shakeAuth("#newErr", "PINs don't match.");
     const salt = newSalt();
@@ -1118,7 +1148,11 @@
   function signIn(u) {
     currentUser = u;
     currentUserId = u.id;
-    try { sessionStorage.setItem(SESSION_KEY, u.id); } catch { /* ignore */ }
+    // Students stay signed in for this tab. The admin must re-enter the password after a refresh.
+    try {
+      if (u.role === "admin") sessionStorage.removeItem(SESSION_KEY);
+      else sessionStorage.setItem(SESSION_KEY, u.id);
+    } catch { /* ignore */ }
     touchUser();
     goals = loadGoals();
     $("#userAvatar").textContent = initials(u.name);
@@ -1126,6 +1160,7 @@
     $("#userName").textContent = u.name;
     $("#userRole").textContent = u.role === "admin" ? "Admin" : "Student";
     $("#adminNav").classList.toggle("hidden", u.role !== "admin");
+    $("#planNav").classList.toggle("hidden", u.role !== "admin");
     document.body.classList.remove("locked");
     updateGoal();
     setMode("stories");
@@ -1195,11 +1230,18 @@
   }
 
   function importOne(users, rec, data) {
+    // Admin progress (from the admin on another device, or an old local admin) goes to the
+    // built-in admin. Imported records can never become admin.
+    if (rec.id === ADMIN_ID || rec.role === "admin") {
+      writeUserData(ADMIN_ID, mergeData(readUserData(ADMIN_ID), data || {}));
+      return;
+    }
     let u = users.find((x) => x.id === rec.id);
     if (!u) {
       u = { id: rec.id, name: rec.name, role: "user", imported: true, salt: rec.salt || null, hash: rec.hash || null, created: new Date().toISOString() };
       users.push(u);
     } else if (!u.hash && rec.hash) { u.salt = rec.salt; u.hash = rec.hash; }
+    u.role = "user";
     u.lastImport = new Date().toISOString();
     writeUserData(u.id, mergeData(readUserData(u.id), data || {}));
   }
@@ -1226,10 +1268,10 @@
 
   $("#backupBtn").addEventListener("click", () => {
     if (!currentUser || currentUser.role !== "admin") return;
-    const users = getUsers();
+    const users = [{ id: ADMIN_ID, name: adminUser().name, role: "admin" }, ...getUsers().filter((u) => u.role !== "admin")];
     const data = {};
     users.forEach((u) => { data[u.id] = readUserData(u.id); });
-    download(`typingDrill-backup-${today()}.json`, { app: "typingDrill", kind: "backup", version: 1, exported: new Date().toISOString(), users, data });
+    download(`typingDrill-backup-${today()}.json`, { app: "typingDrill", kind: "backup", version: 2, exported: new Date().toISOString(), users, data });
     toast("Backup downloaded. Keep it somewhere safe.");
   });
 
@@ -1253,7 +1295,12 @@
 
   function renderAdmin() {
     if (!currentUser || currentUser.role !== "admin") return;
-    const users = getUsers().sort((a, b) => (a.role === "admin" ? -1 : b.role === "admin" ? 1 : a.name.localeCompare(b.name)));
+    let adminLast = null;
+    try { adminLast = localStorage.getItem("u:admin:lastActive"); } catch { /* ignore */ }
+    const users = [
+      { ...adminUser(), lastActive: adminLast },
+      ...getUsers().filter((u) => u.role !== "admin").sort((a, b) => a.name.localeCompare(b.name))
+    ];
     const sums = users.map((u) => ({ u, s: userSummary(u) }));
     const weekAgo = Date.now() - 7 * 864e5;
     $("#aUsers").textContent = users.length;
@@ -1284,7 +1331,10 @@
     $("#adRole").textContent = u.role === "admin" ? "Admin" : u.imported ? "Imported profile" : "Student on this device";
     $("#adName").textContent = u.name;
     $("#adSub").textContent = `Best ${s.best} WPM · average ${s.avg} WPM · plan ${s.plan}% · last active ${fmtShort(s.last)}`;
-    $("#adDelete").disabled = u.id === currentUser.id;
+    // The built-in admin is fixed: it can't be deleted or have its password changed here.
+    $("#adDelete").disabled = u.id === ADMIN_ID;
+    $("#adResetPin").disabled = u.id === ADMIN_ID;
+    $("#adResetPin").title = u.id === ADMIN_ID ? "The admin password is set in admin-config.js" : "";
     const hist = s.d.history || [];
     renderChart(hist.slice().reverse(), fmtShort, "#adChart", null, (s.d.goals && s.d.goals.wpm) || DEFAULT_GOALS.wpm);
     const top = Object.entries(s.d.missed || {}).sort((a, b) => b[1] - a[1]).slice(0, 15);
@@ -1297,7 +1347,7 @@
   $("#adDelete").addEventListener("click", () => {
     const users = getUsers();
     const u = users.find((x) => x.id === adminSel);
-    if (!u || u.id === currentUser.id) return;
+    if (!u || u.id === ADMIN_ID) return;
     if (!confirm(`Delete "${u.name}" and all of their progress from this device? This cannot be undone.`)) return;
     USER_KEYS.forEach((k) => { try { localStorage.removeItem(`u:${u.id}:${k}`); } catch { /* ignore */ } });
     saveUsers(users.filter((x) => x.id !== u.id));
@@ -1309,7 +1359,7 @@
   $("#adResetPin").addEventListener("click", async () => {
     const users = getUsers();
     const u = users.find((x) => x.id === adminSel);
-    if (!u) return;
+    if (!u || u.id === ADMIN_ID) return;
     const p1 = prompt(`New PIN for ${u.name} (4 to 8 digits):`);
     if (p1 == null) return;
     if (!validPin(p1)) { toast("PIN must be 4 to 8 digits."); return; }
@@ -1324,13 +1374,42 @@
   window.addEventListener("resize", () => { if (mode === "admin") renderAdmin(); });
 
   // ---------- boot ----------
-  (function boot() {
+  // One-time migration to the built-in admin:
+  //  - progress saved before sign-in existed (un-prefixed keys)
+  //  - any admin created locally by older versions (e.g. "hamidi")
+  // is moved into the built-in admin's profile, and local admin records are removed.
+  function migrateToBuiltInAdmin() {
+    const has = (k) => { try { return localStorage.getItem(`u:${ADMIN_ID}:${k}`) != null; } catch { return true; } };
+    const move = (from, k) => {
+      try {
+        const v = localStorage.getItem(from);
+        if (v == null) return;
+        if (!has(k)) localStorage.setItem(`u:${ADMIN_ID}:${k}`, v);
+        localStorage.removeItem(from);
+      } catch { /* ignore */ }
+    };
+    USER_KEYS.forEach((k) => move(k, k));
+    // Old local admins, and any local profile using the built-in admin's name (it could no
+    // longer sign in), are merged into the admin so no progress is lost.
     const users = getUsers();
-    if (!users.length) { showScreen("#authSetup"); return; }
+    const absorb = users.filter((u) => u.role === "admin" || isAdminName(u.name));
+    if (absorb.length) {
+      absorb.forEach((u) => {
+        writeUserData(ADMIN_ID, mergeData(readUserData(ADMIN_ID), readUserData(u.id)));
+        USER_KEYS.forEach((k) => { try { localStorage.removeItem(`u:${u.id}:${k}`); } catch { /* ignore */ } });
+      });
+      saveUsers(users.filter((u) => !absorb.includes(u)));
+    }
+  }
+
+  (function boot() {
+    migrateToBuiltInAdmin();
+    if (!ADMIN_CFG) console.info("typingDrill: no admin configured yet. Open tools/admin-setup.html to create admin-config.js.");
     let sid = null;
     try { sid = sessionStorage.getItem(SESSION_KEY); } catch { /* ignore */ }
-    const u = users.find((x) => x.id === sid && x.hash);
-    if (u) { signIn(u); return; } // same tab, still signed in
+    // Only student sessions are restored; the admin always signs in again.
+    const u = sid && sid !== ADMIN_ID ? getUsers().find((x) => x.id === sid && x.hash && x.role !== "admin") : null;
+    if (u) { signIn({ ...u, role: "user" }); return; } // same tab, still signed in
     openLogin();
   })();
 })();

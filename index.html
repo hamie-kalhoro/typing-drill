@@ -21,23 +21,12 @@
       <div><strong>typingDrill</strong><span>by HAMiD</span></div>
     </div>
 
-    <!-- first run: create the admin -->
-    <form id="authSetup" class="auth-screen hidden" autocomplete="off">
-      <h1>Create the admin account</h1>
-      <p class="muted">First time on this device. The admin can see every profile's progress; nobody else can.</p>
-      <label class="auth-field"><span>Your name</span><input id="setupName" maxlength="24" required placeholder="e.g. Hamid"></label>
-      <label class="auth-field"><span>Admin PIN (4–8 digits)</span><input id="setupPin" type="password" inputmode="numeric" pattern="\d{4,8}" maxlength="8" required></label>
-      <label class="auth-field"><span>Confirm PIN</span><input id="setupPin2" type="password" inputmode="numeric" pattern="\d{4,8}" maxlength="8" required></label>
-      <p class="auth-error" id="setupErr"></p>
-      <button class="btn btn-primary auth-submit" type="submit">Create admin &amp; continue</button>
-    </form>
-
     <!-- sign in: type name + PIN (no list of profiles is ever shown) -->
     <form id="authPick" class="auth-screen hidden" autocomplete="off">
       <h1>Sign in</h1>
       <p class="muted">Enter your name and PIN to open your practice.</p>
       <label class="auth-field"><span>Name</span><input id="loginName" maxlength="24" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
-      <label class="auth-field"><span>PIN</span><input id="loginPin" type="password" inputmode="numeric" maxlength="8" required autocomplete="off"></label>
+      <label class="auth-field"><span>PIN</span><input id="loginPin" type="password" maxlength="64" required autocomplete="off"></label>
       <p class="auth-error" id="loginErr"></p>
       <button class="btn btn-primary auth-submit" type="submit">Sign in</button>
       <button class="btn btn-ghost auth-back" type="button" id="toCreate">New here? Create a profile</button>
@@ -93,7 +82,7 @@
 
     <nav class="nav" id="tabs">
       <p class="nav-label">Practice</p>
-      <button data-mode="plan">
+      <button data-mode="plan" id="planNav" class="hidden">
         <svg viewBox="0 0 24 24"><path d="M4 22V4"/><path d="M4 4h12l-2 4 2 4H4"/></svg>
         <span>60 WPM Plan</span>
       </button>
@@ -486,6 +475,7 @@
 <div id="chartTip" class="chart-tip hidden"></div>
 <div id="toast" class="toast"></div>
 
+<script src="admin-config.js"></script>
 <script src="texts.js"></script>
 <script src="app.js"></script>
 </body>
