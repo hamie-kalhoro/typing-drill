@@ -3,9 +3,14 @@
 
   // ---------- helpers ----------
   const $ = (s) => document.querySelector(s);
+  const USER_KEYS = ["history", "missed", "daily", "plan", "goals"];
+  let currentUserId = null; // set after sign-in
   const store = {
-    get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
-    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } }
+    // Progress keys are stored per signed-in profile; theme/size/font are device-wide.
+    key(k) { return USER_KEYS.includes(k) ? `u:${currentUserId || "anon"}:${k}` : k; },
+    get(k, d) { try { const v = localStorage.getItem(this.key(k)); return v ? JSON.parse(v) : d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(this.key(k), JSON.stringify(v)); } catch { /* ignore */ } },
+    remove(k) { try { localStorage.removeItem(this.key(k)); } catch { /* ignore */ } }
   };
   // ---------- goals (user-editable) ----------
   const DEFAULT_GOALS = { wpm: 60, acc: 95, daily: 99 };
@@ -267,6 +272,7 @@
     const hist = store.get("history", []);
     hist.unshift({ date: new Date().toISOString(), title: s.title, wpm: net, acc: +acc.toFixed(1), wrong, secs: Math.round(t) });
     store.set("history", hist.slice(0, 20));
+    touchUser();
     updateGoal();
 
     // missed words
@@ -354,7 +360,7 @@
     if (e.key === "Escape" && document.activeElement !== input) {
       if (!$("#goalModal").classList.contains("hidden")) closeGoals();
       else if (!$("#modal").classList.contains("hidden")) closeModal();
-      else if (mode !== "stats") restart();
+      else if (!document.body.classList.contains("locked") && !$("#practice").classList.contains("hidden")) restart();
     }
   });
 
@@ -445,11 +451,26 @@
     drill: ["Practice", "Word Drill", "Focused repetition of one word group at a time."],
     daily: ["Practice", "Daily 10", () => `Ten words a day: type them while looking, then without looking. Score ${goals.daily}% to unlock the next set.`],
     plan: ["Practice", "60 WPM Plan", "A focused 2-week, 14-day routine: 50 WPM by day 7, 60 WPM by day 14. About 25–30 minutes a day."],
-    stats: ["Insights", "Performance", "Your speed trend, accuracy and most-missed words."]
+    stats: ["Insights", "Performance", "Your speed trend, accuracy and most-missed words."],
+    admin: ["Admin", "All profiles", "Only you can see this page. Import progress files from other devices to track everyone in one place."]
   };
 
   function setMode(m) {
+    if (m === "admin" && !(currentUser && currentUser.role === "admin")) m = "stories"; // admin-only page
     mode = m;
+    $("#adminPanel").classList.toggle("hidden", m !== "admin");
+    if (m === "admin") {
+      const [eyebrow, title, sub] = PAGE_HEADS.admin;
+      $("#pageEyebrow").textContent = eyebrow;
+      $("#pageTitle").textContent = title;
+      $("#pageSub").textContent = sub;
+      $("#restartBtn").classList.add("hidden");
+      document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+      ["#practice", "#statsPanel", "#planPanel"].forEach((s) => $(s).classList.add("hidden"));
+      if (session) { stopTimer(); session.finished = true; }
+      renderAdmin();
+      return;
+    }
     const [eyebrow, title, sub] = PAGE_HEADS[m];
     $("#pageEyebrow").textContent = eyebrow;
     $("#pageTitle").textContent = title;
@@ -599,9 +620,9 @@
   }
 
   // ---------- WPM trend chart (single series, inline SVG) ----------
-  function renderChart(data, fmtDate) {
-    $("#chartSub").textContent = `Last 20 tests, oldest to newest. Dashed line = ${goals.wpm} WPM goal.`;
-    const box = $("#chart");
+  function renderChart(data, fmtDate, boxSel = "#chart", subSel = "#chartSub", goalWpm = goals.wpm) {
+    if (subSel) $(subSel).textContent = `Last ${data.length} tests, oldest to newest. Dashed line = ${goalWpm} WPM goal.`;
+    const box = $(boxSel);
     const tip = $("#chartTip");
     if (data.length < 2) {
       box.innerHTML = `<div class="chart-empty">Complete at least 2 tests to see your trend.</div>`;
@@ -610,7 +631,7 @@
     const W = box.clientWidth || 600, H = box.clientHeight || 240;
     const m = { t: 12, r: 16, b: 26, l: 34 };
     const iw = W - m.l - m.r, ih = H - m.t - m.b;
-    const rawMax = Math.max(60, goals.wpm + 10, Math.max(...data.map((d) => d.wpm)) + 5);
+    const rawMax = Math.max(60, goalWpm + 10, Math.max(...data.map((d) => d.wpm)) + 5);
     const step = rawMax <= 60 ? 15 : rawMax <= 120 ? 20 : 40;
     const maxV = Math.ceil(rawMax / step) * step;
     const x = (i) => m.l + (data.length === 1 ? iw / 2 : (i / (data.length - 1)) * iw);
@@ -621,8 +642,8 @@
       svg += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/>`;
       svg += `<text class="axis-text" x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
     }
-    svg += `<line class="goal" x1="${m.l}" x2="${W - m.r}" y1="${y(goals.wpm)}" y2="${y(goals.wpm)}"/>`;
-    svg += `<text class="goal-text" x="${m.l + 6}" y="${y(goals.wpm) - 6}" text-anchor="start">Goal ${goals.wpm}</text>`;
+    svg += `<line class="goal" x1="${m.l}" x2="${W - m.r}" y1="${y(goalWpm)}" y2="${y(goalWpm)}"/>`;
+    svg += `<text class="goal-text" x="${m.l + 6}" y="${y(goalWpm) - 6}" text-anchor="start">Goal ${goalWpm}</text>`;
     const pts = data.map((d, i) => `${x(i)},${y(d.wpm)}`);
     svg += `<path class="area" d="M${x(0)},${y(0)} L${pts.join(" L")} L${x(data.length - 1)},${y(0)} Z"/>`;
     svg += `<path class="line" d="M${pts.join(" L")}"/>`;
@@ -670,7 +691,7 @@
   });
   $("#resetStatsBtn").addEventListener("click", () => {
     if (!confirm("Saare results, mistakes aur Daily 10 progress delete ho jayenge. Sure?")) return;
-    ["history", "missed", "daily"].forEach((k) => { try { localStorage.removeItem(k); } catch { /* ignore */ } });
+    ["history", "missed", "daily"].forEach((k) => store.remove(k));
     renderStatsPanel();
     toast("Stats reset.");
   });
@@ -899,7 +920,7 @@
   });
   $("#planReset").addEventListener("click", () => {
     if (!confirm("Reset all 60 WPM plan progress? Your test history is kept.")) return;
-    try { localStorage.removeItem("plan"); } catch { /* ignore */ }
+    store.remove("plan");
     planSel = null;
     renderPlan();
     toast("Plan reset.");
@@ -958,7 +979,358 @@
     document.title = session.finished ? `✔ ${net} WPM · ${BASE_TITLE}` : `${net} WPM · ${BASE_TITLE}`;
   }, 1000);
 
+  // =====================================================================
+  // Sign-in: profiles + PIN, no backend. Everything lives in this browser.
+  // PINs are stored only as salted SHA-256 hashes. This keeps profiles
+  // private from each other on a shared device; it is not server-grade
+  // security (anyone with dev tools on this device can read raw storage).
+  // =====================================================================
+  let currentUser = null;
+  const SESSION_KEY = "td_session";
+  const getUsers = () => { try { return JSON.parse(localStorage.getItem("users") || "[]"); } catch { return []; } };
+  const saveUsers = (u) => { try { localStorage.setItem("users", JSON.stringify(u)); } catch { /* ignore */ } };
+  const newId = () => Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4);
+  const initials = (n) => n.trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join("").toUpperCase() || "?";
+  const hueOf = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+  const avatarStyle = (u) => `background:hsl(${(hueOf(u.id) % 60) + 5} 52% 46%)`; // warm hues to match the theme
+  const fmtShort = (d) => (d ? new Date(d).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
+  const validPin = (p) => /^\d{4,8}$/.test(p);
+
+  function hexOf(buf) { return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join(""); }
+  async function hashPin(pin, salt) {
+    const msg = `${salt}:${pin}:typingDrill`;
+    if (window.crypto && crypto.subtle) {
+      try { return hexOf(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(msg))); } catch { /* fall through */ }
+    }
+    // Fallback for browsers without SubtleCrypto (e.g. some file:// contexts): iterated 53-bit hash.
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let r = 0; r < 2000; r++) for (let i = 0; i < msg.length; i++) {
+      const ch = msg.charCodeAt(i) + r;
+      h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    return "f" + (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16);
+  }
+  const newSalt = () => {
+    const a = new Uint8Array(12);
+    if (window.crypto && crypto.getRandomValues) crypto.getRandomValues(a); else a.forEach((_, i) => { a[i] = Math.random() * 256; });
+    return hexOf(a);
+  };
+
+  function touchUser() {
+    if (!currentUser) return;
+    const users = getUsers();
+    const u = users.find((x) => x.id === currentUser.id);
+    if (u) { u.lastActive = new Date().toISOString(); saveUsers(users); }
+  }
+
+  // ---------- auth screens ----------
+  function showScreen(id) {
+    ["#authSetup", "#authPick", "#authCreate"].forEach((s) => $(s).classList.toggle("hidden", s !== id));
+    const first = $(id).querySelector("input");
+    if (first) setTimeout(() => first.focus(), 30);
+  }
+  function shakeAuth(errSel, msg) {
+    $(errSel).textContent = msg;
+    const c = $(".auth-card");
+    c.classList.remove("shake"); void c.offsetWidth; c.classList.add("shake");
+  }
+
+  // Private sign-in: nobody can see which profiles exist. Users type their own
+  // name + PIN, and every failure gives the same message whether or not the
+  // name exists, so the form can't be used to discover other people.
+  function openLogin() {
+    $("#authPick").reset();
+    $("#loginErr").textContent = "";
+    showScreen("#authPick");
+  }
+
+  // Lockout is tracked per typed name (and for unknown names too) and survives
+  // a page refresh within this tab.
+  const LOCK_KEY = "td_attempts";
+  const getAttempts = () => { try { return JSON.parse(sessionStorage.getItem(LOCK_KEY) || "{}"); } catch { return {}; } };
+  const saveAttempts = (a) => { try { sessionStorage.setItem(LOCK_KEY, JSON.stringify(a)); } catch { /* ignore */ } };
+
+  $("#authPick").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = $("#loginName").value.trim();
+    const pin = $("#loginPin").value.trim();
+    const key = name.toLowerCase();
+    const all = getAttempts();
+    const a = all[key] || { n: 0, until: 0 };
+    if (Date.now() < a.until) {
+      return shakeAuth("#loginErr", `Too many attempts. Try again in ${Math.ceil((a.until - Date.now()) / 1000)} s.`);
+    }
+    const u = getUsers().find((x) => x.hash && x.name.toLowerCase() === key);
+    // Always hash (even for unknown names) so success/failure takes the same time.
+    const h = await hashPin(pin, u ? u.salt : "no-such-user");
+    if (u && h === u.hash) {
+      delete all[key];
+      saveAttempts(all);
+      signIn(u);
+      return;
+    }
+    a.n++;
+    if (a.n >= 5) { a.until = Date.now() + 30000; a.n = 0; }
+    all[key] = a;
+    saveAttempts(all);
+    $("#loginPin").value = "";
+    shakeAuth("#loginErr", a.until > Date.now() ? "Too many attempts. Locked for 30 seconds." : "Name or PIN is incorrect.");
+  });
+
+  $("#toCreate").addEventListener("click", () => { $("#authCreate").reset(); $("#newErr").textContent = ""; showScreen("#authCreate"); });
+
+  $("#authSetup").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = $("#setupName").value.trim(), p1 = $("#setupPin").value, p2 = $("#setupPin2").value;
+    if (!name) return shakeAuth("#setupErr", "Please enter your name.");
+    if (!validPin(p1)) return shakeAuth("#setupErr", "PIN must be 4 to 8 digits.");
+    if (p1 !== p2) return shakeAuth("#setupErr", "PINs don't match.");
+    const salt = newSalt();
+    const admin = { id: newId(), name, role: "admin", salt, hash: await hashPin(p1, salt), created: new Date().toISOString() };
+    // Move any progress saved before sign-in existed into the admin's profile.
+    USER_KEYS.forEach((k) => {
+      try {
+        const v = localStorage.getItem(k);
+        if (v != null) { localStorage.setItem(`u:${admin.id}:${k}`, v); localStorage.removeItem(k); }
+      } catch { /* ignore */ }
+    });
+    saveUsers([admin]);
+    signIn(admin);
+  });
+
+  $("#authCreate").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const name = $("#newName").value.trim(), p1 = $("#newPin").value, p2 = $("#newPin2").value;
+    const users = getUsers();
+    if (!name) return shakeAuth("#newErr", "Please enter a name.");
+    if (users.some((u) => u.name.toLowerCase() === name.toLowerCase())) return shakeAuth("#newErr", "Please choose a different name.");
+    if (!validPin(p1)) return shakeAuth("#newErr", "PIN must be 4 to 8 digits.");
+    if (p1 !== p2) return shakeAuth("#newErr", "PINs don't match.");
+    const salt = newSalt();
+    const u = { id: newId(), name, role: "user", salt, hash: await hashPin(p1, salt), created: new Date().toISOString() };
+    users.push(u);
+    saveUsers(users);
+    signIn(u);
+  });
+
+  document.querySelectorAll("#auth [data-back]").forEach((b) => b.addEventListener("click", openLogin));
+
+  function signIn(u) {
+    currentUser = u;
+    currentUserId = u.id;
+    try { sessionStorage.setItem(SESSION_KEY, u.id); } catch { /* ignore */ }
+    touchUser();
+    goals = loadGoals();
+    $("#userAvatar").textContent = initials(u.name);
+    $("#userAvatar").setAttribute("style", avatarStyle(u));
+    $("#userName").textContent = u.name;
+    $("#userRole").textContent = u.role === "admin" ? "Admin" : "Student";
+    $("#adminNav").classList.toggle("hidden", u.role !== "admin");
+    document.body.classList.remove("locked");
+    updateGoal();
+    setMode("stories");
+  }
+
+  $("#signOutBtn").addEventListener("click", () => {
+    if (session && session.started && !session.finished && !confirm("A test is running. Sign out anyway?")) return;
+    try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+    location.reload(); // clean slate: nothing from this profile stays in memory
+  });
+
+  // ---------- export / import ----------
+  function readUserData(id) {
+    const out = {};
+    USER_KEYS.forEach((k) => { try { const v = localStorage.getItem(`u:${id}:${k}`); out[k] = v ? JSON.parse(v) : null; } catch { out[k] = null; } });
+    return out;
+  }
+  function writeUserData(id, data) {
+    USER_KEYS.forEach((k) => { if (data[k] != null) { try { localStorage.setItem(`u:${id}:${k}`, JSON.stringify(data[k])); } catch { /* ignore */ } } });
+  }
+  function download(name, obj) {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  }
+  const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "user";
+  const today = () => new Date().toISOString().slice(0, 10);
+
+  $("#exportBtn").addEventListener("click", () => {
+    if (!currentUser) return;
+    download(`typingDrill-${slug(currentUser.name)}-${today()}.json`, {
+      app: "typingDrill", kind: "progress", version: 1, exported: new Date().toISOString(),
+      user: { id: currentUser.id, name: currentUser.name }, data: readUserData(currentUser.id)
+    });
+    toast("Progress exported. Send the file to your admin.");
+  });
+
+  // Merge imported progress into what we already have, keeping the best of both.
+  function mergeData(a, b) {
+    const out = { ...a };
+    const histKey = (h) => `${h.date}|${h.title}|${h.wpm}`;
+    if (b.history) {
+      const seen = new Map();
+      [...(a.history || []), ...b.history].forEach((h) => seen.set(histKey(h), h));
+      out.history = [...seen.values()].sort((x, y) => (y.date > x.date ? 1 : -1)).slice(0, 50);
+    }
+    if (b.missed) {
+      out.missed = { ...(a.missed || {}) };
+      Object.entries(b.missed).forEach(([w, c]) => { out.missed[w] = Math.max(out.missed[w] || 0, c); });
+    }
+    if (b.daily) {
+      const ad = a.daily || { unlocked: 0, current: 0, best: {} };
+      const best = { ...(ad.best || {}) };
+      Object.entries(b.daily.best || {}).forEach(([k, v]) => { best[k] = Math.max(best[k] || 0, v); });
+      out.daily = { unlocked: Math.max(ad.unlocked || 0, b.daily.unlocked || 0), current: b.daily.current || 0, best };
+    }
+    if (b.plan) {
+      out.plan = { ...(a.plan || {}) };
+      Object.entries(b.plan).forEach(([k, r]) => { if (!out.plan[k] || r.wpm > out.plan[k].wpm) out.plan[k] = r; });
+    }
+    if (b.goals) out.goals = b.goals;
+    return out;
+  }
+
+  function importOne(users, rec, data) {
+    let u = users.find((x) => x.id === rec.id);
+    if (!u) {
+      u = { id: rec.id, name: rec.name, role: "user", imported: true, salt: rec.salt || null, hash: rec.hash || null, created: new Date().toISOString() };
+      users.push(u);
+    } else if (!u.hash && rec.hash) { u.salt = rec.salt; u.hash = rec.hash; }
+    u.lastImport = new Date().toISOString();
+    writeUserData(u.id, mergeData(readUserData(u.id), data || {}));
+  }
+
+  $("#importFile").addEventListener("change", async (e) => {
+    if (!currentUser || currentUser.role !== "admin") return;
+    const files = [...e.target.files];
+    e.target.value = "";
+    const users = getUsers();
+    let ok = 0, bad = 0;
+    for (const f of files) {
+      try {
+        const j = JSON.parse(await f.text());
+        if (j.app !== "typingDrill") throw new Error("not ours");
+        if (j.kind === "progress" && j.user && j.user.id) { importOne(users, j.user, j.data); ok++; }
+        else if (j.kind === "backup" && Array.isArray(j.users)) { j.users.forEach((u) => importOne(users, u, (j.data || {})[u.id])); ok++; }
+        else throw new Error("unknown");
+      } catch { bad++; }
+    }
+    saveUsers(users);
+    renderAdmin();
+    toast(`${ok} file${ok === 1 ? "" : "s"} imported${bad ? `, ${bad} skipped (not a typingDrill file)` : ""}.`);
+  });
+
+  $("#backupBtn").addEventListener("click", () => {
+    if (!currentUser || currentUser.role !== "admin") return;
+    const users = getUsers();
+    const data = {};
+    users.forEach((u) => { data[u.id] = readUserData(u.id); });
+    download(`typingDrill-backup-${today()}.json`, { app: "typingDrill", kind: "backup", version: 1, exported: new Date().toISOString(), users, data });
+    toast("Backup downloaded. Keep it somewhere safe.");
+  });
+
+  // ---------- admin dashboard ----------
+  let adminSel = null;
+  function userSummary(u) {
+    const d = readUserData(u.id);
+    const hist = d.history || [];
+    const n = hist.length;
+    const planDone = PLAN.reduce((s, day) => s + day.tasks.filter((t) => d.plan && d.plan[t.id]).length, 0);
+    const last = [u.lastActive, hist[0] && hist[0].date].filter(Boolean).sort().pop();
+    return {
+      d, n,
+      best: hist.reduce((m, h) => Math.max(m, h.wpm), 0),
+      avg: n ? Math.round(hist.reduce((s, h) => s + h.wpm, 0) / n) : 0,
+      acc: n ? (hist.reduce((s, h) => s + h.acc, 0) / n).toFixed(1) : null,
+      plan: Math.round((planDone / (PLAN.length * 3)) * 100),
+      last
+    };
+  }
+
+  function renderAdmin() {
+    if (!currentUser || currentUser.role !== "admin") return;
+    const users = getUsers().sort((a, b) => (a.role === "admin" ? -1 : b.role === "admin" ? 1 : a.name.localeCompare(b.name)));
+    const sums = users.map((u) => ({ u, s: userSummary(u) }));
+    const weekAgo = Date.now() - 7 * 864e5;
+    $("#aUsers").textContent = users.length;
+    $("#aTop").textContent = sums.reduce((m, x) => Math.max(m, x.s.best), 0);
+    $("#aTests").textContent = sums.reduce((m, x) => m + x.s.n, 0);
+    $("#aActive").textContent = sums.filter((x) => x.s.last && new Date(x.s.last).getTime() > weekAgo).length;
+
+    $("#adminTable tbody").innerHTML = sums.map(({ u, s }) => `
+      <tr data-uid="${u.id}" class="${u.id === adminSel ? "sel" : ""}">
+        <td><div class="who-cell"><span class="avatar" style="${avatarStyle(u)}">${esc(initials(u.name))}</span>
+          <strong>${esc(u.name)}</strong>
+          ${u.role === "admin" ? `<span class="tag admin">Admin</span>` : u.imported ? `<span class="tag">Imported</span>` : `<span class="tag">This device</span>`}
+        </div></td>
+        <td class="num">${s.n}</td>
+        <td class="num strong">${s.best || "—"}</td>
+        <td class="num">${s.avg || "—"}</td>
+        <td class="num">${s.acc != null ? s.acc + "%" : "—"}</td>
+        <td class="num">${s.plan}%</td>
+        <td>${fmtShort(s.last)}</td>
+      </tr>`).join("");
+    $("#adminTable tbody").querySelectorAll("tr").forEach((tr) =>
+      tr.addEventListener("click", () => { adminSel = tr.dataset.uid; renderAdmin(); }));
+
+    const pick = sums.find((x) => x.u.id === adminSel);
+    $("#adminDetail").classList.toggle("hidden", !pick);
+    if (!pick) return;
+    const { u, s } = pick;
+    $("#adRole").textContent = u.role === "admin" ? "Admin" : u.imported ? "Imported profile" : "Student on this device";
+    $("#adName").textContent = u.name;
+    $("#adSub").textContent = `Best ${s.best} WPM · average ${s.avg} WPM · plan ${s.plan}% · last active ${fmtShort(s.last)}`;
+    $("#adDelete").disabled = u.id === currentUser.id;
+    const hist = s.d.history || [];
+    renderChart(hist.slice().reverse(), fmtShort, "#adChart", null, (s.d.goals && s.d.goals.wpm) || DEFAULT_GOALS.wpm);
+    const top = Object.entries(s.d.missed || {}).sort((a, b) => b[1] - a[1]).slice(0, 15);
+    $("#adHard").innerHTML = top.length ? top.map(([w, c]) => `<span class="chip">${esc(w)}<b>×${c}</b></span>`).join("") : `<span class="muted">No mistakes recorded.</span>`;
+    $("#adHistory tbody").innerHTML = hist.length
+      ? hist.map((h) => `<tr><td>${fmtShort(h.date)}</td><td>${esc(h.title)}</td><td class="num strong">${h.wpm}</td><td class="num">${h.acc}%</td></tr>`).join("")
+      : `<tr><td colspan="4" class="muted">No results yet.</td></tr>`;
+  }
+
+  $("#adDelete").addEventListener("click", () => {
+    const users = getUsers();
+    const u = users.find((x) => x.id === adminSel);
+    if (!u || u.id === currentUser.id) return;
+    if (!confirm(`Delete "${u.name}" and all of their progress from this device? This cannot be undone.`)) return;
+    USER_KEYS.forEach((k) => { try { localStorage.removeItem(`u:${u.id}:${k}`); } catch { /* ignore */ } });
+    saveUsers(users.filter((x) => x.id !== u.id));
+    adminSel = null;
+    renderAdmin();
+    toast("Profile deleted.");
+  });
+
+  $("#adResetPin").addEventListener("click", async () => {
+    const users = getUsers();
+    const u = users.find((x) => x.id === adminSel);
+    if (!u) return;
+    const p1 = prompt(`New PIN for ${u.name} (4 to 8 digits):`);
+    if (p1 == null) return;
+    if (!validPin(p1)) { toast("PIN must be 4 to 8 digits."); return; }
+    if (prompt("Type the new PIN again:") !== p1) { toast("PINs didn't match. Nothing changed."); return; }
+    u.salt = newSalt();
+    u.hash = await hashPin(p1, u.salt);
+    saveUsers(users);
+    renderAdmin();
+    toast(`PIN updated for ${u.name}.${u.imported ? " They can now sign in on this device." : ""}`);
+  });
+
+  window.addEventListener("resize", () => { if (mode === "admin") renderAdmin(); });
+
   // ---------- boot ----------
-  updateGoal();
-  setMode("stories");
+  (function boot() {
+    const users = getUsers();
+    if (!users.length) { showScreen("#authSetup"); return; }
+    let sid = null;
+    try { sid = sessionStorage.getItem(SESSION_KEY); } catch { /* ignore */ }
+    const u = users.find((x) => x.id === sid && x.hash);
+    if (u) { signIn(u); return; } // same tab, still signed in
+    openLogin();
+  })();
 })();

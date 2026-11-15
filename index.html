@@ -11,7 +11,54 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="locked">
+
+<!-- ============ Sign-in (no backend: profiles + PIN, stored on this device) ============ -->
+<div id="auth" class="auth">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <img src="favicon.svg" alt="" width="52" height="52">
+      <div><strong>typingDrill</strong><span>by HAMiD</span></div>
+    </div>
+
+    <!-- first run: create the admin -->
+    <form id="authSetup" class="auth-screen hidden" autocomplete="off">
+      <h1>Create the admin account</h1>
+      <p class="muted">First time on this device. The admin can see every profile's progress; nobody else can.</p>
+      <label class="auth-field"><span>Your name</span><input id="setupName" maxlength="24" required placeholder="e.g. Hamid"></label>
+      <label class="auth-field"><span>Admin PIN (4–8 digits)</span><input id="setupPin" type="password" inputmode="numeric" pattern="\d{4,8}" maxlength="8" required></label>
+      <label class="auth-field"><span>Confirm PIN</span><input id="setupPin2" type="password" inputmode="numeric" pattern="\d{4,8}" maxlength="8" required></label>
+      <p class="auth-error" id="setupErr"></p>
+      <button class="btn btn-primary auth-submit" type="submit">Create admin &amp; continue</button>
+    </form>
+
+    <!-- sign in: type name + PIN (no list of profiles is ever shown) -->
+    <form id="authPick" class="auth-screen hidden" autocomplete="off">
+      <h1>Sign in</h1>
+      <p class="muted">Enter your name and PIN to open your practice.</p>
+      <label class="auth-field"><span>Name</span><input id="loginName" maxlength="24" required autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+      <label class="auth-field"><span>PIN</span><input id="loginPin" type="password" inputmode="numeric" maxlength="8" required autocomplete="off"></label>
+      <p class="auth-error" id="loginErr"></p>
+      <button class="btn btn-primary auth-submit" type="submit">Sign in</button>
+      <button class="btn btn-ghost auth-back" type="button" id="toCreate">New here? Create a profile</button>
+    </form>
+
+    <!-- new profile -->
+    <form id="authCreate" class="auth-screen hidden" autocomplete="off">
+      <h1>New profile</h1>
+      <p class="muted">Your progress stays private behind your PIN.</p>
+      <label class="auth-field"><span>Name</span><input id="newName" maxlength="24" required></label>
+      <label class="auth-field"><span>PIN (4–8 digits)</span><input id="newPin" type="password" inputmode="numeric" pattern="\d{4,8}" maxlength="8" required></label>
+      <label class="auth-field"><span>Confirm PIN</span><input id="newPin2" type="password" inputmode="numeric" pattern="\d{4,8}" maxlength="8" required></label>
+      <p class="auth-error" id="newErr"></p>
+      <button class="btn btn-primary auth-submit" type="submit">Create profile</button>
+      <button class="btn btn-ghost auth-back" type="button" data-back>‹ Back to sign in</button>
+    </form>
+
+    <p class="auth-foot muted small">🔒 Stored only in this browser. No account, no server, no tracking.</p>
+  </div>
+</div>
+
 <div class="app">
 
   <!-- ============ Sidebar ============ -->
@@ -71,9 +118,20 @@
         <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/></svg>
         <span>Performance</span>
       </button>
+      <button data-mode="admin" id="adminNav" class="hidden">
+        <svg viewBox="0 0 24 24"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>
+        <span>Admin</span>
+      </button>
     </nav>
 
     <div class="sidebar-foot">
+      <div class="user-chip">
+        <span id="userAvatar" class="avatar"></span>
+        <div class="user-meta"><strong id="userName"></strong><span id="userRole"></span></div>
+        <button id="signOutBtn" class="goal-edit" title="Sign out" aria-label="Sign out">
+          <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/></svg>
+        </button>
+      </div>
       <div class="goal-card">
         <div class="goal-top">
           <span>Your goal</span>
@@ -285,13 +343,61 @@
         <div class="card">
           <div class="card-head">
             <div><h3>Recent results</h3><p class="muted small">Saved on this device</p></div>
-            <button id="resetStatsBtn" class="btn btn-ghost btn-sm danger">Reset</button>
+            <div class="head-actions">
+              <button id="exportBtn" class="btn btn-secondary btn-sm" title="Download your progress to send to the admin">Export progress</button>
+              <button id="resetStatsBtn" class="btn btn-ghost btn-sm danger">Reset</button>
+            </div>
           </div>
           <div class="table-wrap">
             <table id="historyTable">
               <thead><tr><th>Date</th><th>Text</th><th class="num">WPM</th><th class="num">Acc</th><th class="num">Wrong</th><th class="num">Time</th></tr></thead>
               <tbody></tbody>
             </table>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section id="adminPanel" class="hidden">
+      <div class="kpis">
+        <div class="kpi"><span class="kpi-label">Profiles</span><span class="kpi-value" id="aUsers">0</span></div>
+        <div class="kpi kpi-hero"><span class="kpi-label">Top speed</span><span class="kpi-value" id="aTop">0</span></div>
+        <div class="kpi"><span class="kpi-label">Tests (all users)</span><span class="kpi-value" id="aTests">0</span></div>
+        <div class="kpi"><span class="kpi-label">Active this week</span><span class="kpi-value" id="aActive">0</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><h3>All profiles</h3><p class="muted small">Local profiles and progress files imported from other devices. Click a row for details.</p></div>
+          <div class="head-actions">
+            <label class="btn btn-secondary btn-sm" for="importFile">Import progress files</label>
+            <input id="importFile" type="file" accept=".json,application/json" multiple class="hidden">
+            <button id="backupBtn" class="btn btn-ghost btn-sm">Backup everything</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="adminTable">
+            <thead><tr><th>Profile</th><th class="num">Tests</th><th class="num">Best</th><th class="num">Avg WPM</th><th class="num">Avg acc</th><th class="num">Plan</th><th>Last active</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card hidden" id="adminDetail">
+        <div class="card-head">
+          <div><p class="eyebrow" id="adRole"></p><h3 id="adName"></h3><p class="muted small" id="adSub"></p></div>
+          <div class="head-actions">
+            <button id="adResetPin" class="btn btn-ghost btn-sm">Reset PIN</button>
+            <button id="adDelete" class="btn btn-ghost btn-sm danger">Delete profile</button>
+          </div>
+        </div>
+        <div id="adChart" class="chart"></div>
+        <div class="grid-2" style="margin-top:16px">
+          <div><h4 class="sub-h">Hardest words</h4><div id="adHard" class="chips"></div></div>
+          <div>
+            <h4 class="sub-h">Recent results</h4>
+            <div class="table-wrap short">
+              <table id="adHistory"><thead><tr><th>Date</th><th>Text</th><th class="num">WPM</th><th class="num">Acc</th></tr></thead><tbody></tbody></table>
+            </div>
           </div>
         </div>
       </div>
