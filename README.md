@@ -18,6 +18,7 @@ It is a plain static website: no install, no build step, no server, no account. 
 - Live green/red letter feedback, net WPM, gross WPM, accuracy and wrong-word count
 - Timed tests (1, 2, 3, 5 min) or full-text mode
 - Paste is blocked, so practice stays honest
+- **Exam Mode** (High Court style): copy your own printed paper into a blank box with no live checking. When time ends you get speed, accuracy and hints at once from an English dictionary (spelling suggestions, capitals, punctuation spacing, repeated words), If your text matches one of the hidden papers in `exam-papers.js` (never shown on screen), it is scored exactly, word by word, against that paper instead. Word lists: SCOWL by Kevin Atkinson (`words-en.js`)
 
 **Content** (all passages are original)
 - **Exam & topic passages**, including a 375-word 10-minute exam-style test

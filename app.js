@@ -450,6 +450,7 @@
     tough: ["Practice", "Tough-Word Stories", "Stories packed with the words that slow most typists down."],
     drill: ["Practice", "Word Drill", "Focused repetition of one word group at a time."],
     daily: ["Practice", "Daily 10", () => `Ten words a day: type them while looking, then without looking. Score ${goals.daily}% to unlock the next set.`],
+    exam: ["Practice", "Exam Mode", "Real exam style: type the passage into a blank box with no live checking. Your text is analysed when the time ends."],
     plan: ["Practice", "60 WPM Plan", "A focused 2-week, 14-day routine: 50 WPM by day 7, 60 WPM by day 14. About 25–30 minutes a day."],
     stats: ["Insights", "Performance", "Your speed trend, accuracy and most-missed words."],
     admin: ["Admin", "All profiles", "Only you can see this page. Import progress files from other devices to track everyone in one place."]
@@ -458,8 +459,22 @@
   function setMode(m) {
     // Admin-only pages: the dashboard and the 2-week plan.
     if ((m === "admin" || m === "plan") && !(currentUser && currentUser.role === "admin")) m = "stories";
+    if (mode === "exam" && m !== "exam") stopExam();
     mode = m;
     $("#adminPanel").classList.toggle("hidden", m !== "admin");
+    $("#examPanel").classList.toggle("hidden", m !== "exam");
+    if (m === "exam") {
+      const [eyebrow, title, sub] = PAGE_HEADS.exam;
+      $("#pageEyebrow").textContent = eyebrow;
+      $("#pageTitle").textContent = title;
+      $("#pageSub").textContent = sub;
+      $("#restartBtn").classList.add("hidden");
+      document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+      ["#practice", "#statsPanel", "#planPanel"].forEach((s) => $(s).classList.add("hidden"));
+      if (session) { stopTimer(); session.finished = true; }
+      examReset();
+      return;
+    }
     if (m === "admin") {
       const [eyebrow, title, sub] = PAGE_HEADS.admin;
       $("#pageEyebrow").textContent = eyebrow;
@@ -495,7 +510,10 @@
     restart();
   }
 
-  document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  document.querySelectorAll("#tabs button").forEach((b) => b.addEventListener("click", () => {
+    if (mode === "exam" && b.dataset.mode !== "exam" && examUnsaved() && !confirm("An exam is running. Leave and lose it?")) return;
+    setMode(b.dataset.mode);
+  }));
   textPick.addEventListener("change", restart);
   durationSel.addEventListener("change", restart);
   document.querySelectorAll("#durSeg button").forEach((b) => b.addEventListener("click", () => {
@@ -927,10 +945,533 @@
     toast("Plan reset.");
   });
 
+  // =====================================================================
+  // Exam Mode (High Court style): the typist copies from their own printed
+  // paper into a blank box. Nothing is shown or checked while typing. When
+  // the time ends they enter the original passage, and the typed text is
+  // aligned against it word by word; every mistake counts against accuracy.
+  // =====================================================================
+  const examCard = $("#examCard");
+  const examInput = $("#examInput");
+  const examName = $("#examName");
+  let exam = null;
+  let examSecs = 300;
+
+  const examRunning = () => !!(exam && exam.started && !exam.done);
+  const examTitle = () => examName.value.trim() || "My paper";
+  // Typed but not yet analysed (still running, or waiting for the original passage).
+  const examUnsaved = () => !!(exam && exam.started && !exam.saved);
+
+  function examReset() {
+    if (exam) clearInterval(exam.timer);
+    exam = { secs: examSecs, started: false, done: false, startTime: 0, timer: null };
+    loadDict();
+    $("#examTitle").textContent = examTitle();
+    $("#examState").textContent = "Timer starts on your first key";
+    $("#examTimer").textContent = fmtTime(examSecs);
+    $("#examTimer").classList.remove("low");
+    $("#examSubmit").disabled = true;
+    examInput.value = "";
+    examInput.disabled = false;
+    examName.disabled = false;
+    document.querySelectorAll("#examDur button").forEach((b) => { b.disabled = false; });
+    $("#examLive").classList.remove("hidden");
+    $("#examSetup").classList.remove("hidden");
+    $("#examResult").classList.add("hidden");
+    examInput.focus();
+  }
+
+  function examElapsed() { return exam && exam.started ? ((exam.endTime || performance.now()) - exam.startTime) / 1000 : 0; }
+
+  function examTick() {
+    const left = exam.secs - examElapsed();
+    $("#examTimer").textContent = fmtTime(Math.max(0, Math.ceil(left)));
+    $("#examTimer").classList.toggle("low", left <= 30);
+    if (left <= 0) finishExam(true);
+  }
+
+  function examBegin() {
+    exam.started = true;
+    exam.startTime = performance.now();
+    exam.timer = setInterval(examTick, 250);
+    exam.title = examTitle();
+    $("#examTitle").textContent = exam.title;
+    examName.disabled = true;
+    document.querySelectorAll("#examDur button").forEach((b) => { b.disabled = true; });
+    $("#examSubmit").disabled = false;
+    $("#examState").textContent = "Exam in progress";
+  }
+
+  // Letter edit distance where swapping two neighbouring letters ("teh") counts as one edit.
+  function lev(a, b) {
+    if (a === b) return 0;
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+      }
+    }
+    return d[a.length][b.length];
+  }
+
+  // What kind of mistake is typing `t` where `e` was expected?
+  function mistakeKind(e, t) {
+    const ce = cleanWord(e), ct = cleanWord(t);
+    if (ce && ce === ct) return "punct";                 // only punctuation or capital letters differ
+    const a = e.toLowerCase(), b = t.toLowerCase();
+    return 1 - lev(a, b) / Math.max(a.length, b.length) >= 0.5 ? "spell" : "wrong";
+  }
+
+  // Align typed words with the passage (edit distance over words). Skipping a passage word,
+  // adding an extra word and typing a different word each cost 1. The alignment may stop
+  // anywhere in the passage, so the untyped rest of the passage is not counted.
+  // Printed books use curly quotes and break words with hyphens at line ends ("de-motivated"),
+  // so those differences are not mistakes.
+  const wordKey = (w) => w.replace(/[‘’ʼ`]/g, "'").replace(/[“”]/g, '"').replace(/[-‐-—]/g, "");
+  function alignExam(refWords, typWords) {
+    // List bullets ("-", "•", "*") are not words: ignore them on both sides.
+    const isWord = (w) => wordKey(w).replace(/[•*·]/g, "") !== "";
+    refWords = refWords.filter(isWord);
+    typWords = typWords.filter(isWord);
+    const ref = refWords.map(wordKey), typ = typWords.map(wordKey);
+    const n = typ.length;
+    const m = ref.length;
+    const W = m + 1;
+    const D = new Uint16Array((n + 1) * W);   // row 0 stays 0: the typist may start anywhere in the paper
+    for (let i = 1; i <= n; i++) {
+      D[i * W] = i;
+      for (let j = 1; j <= m; j++) {
+        const diag = D[(i - 1) * W + j - 1] + (typ[i - 1] === ref[j - 1] ? 0 : 1);
+        const up = D[(i - 1) * W + j] + 1;   // extra typed word
+        const left = D[i * W + j - 1] + 1;   // skipped passage word
+        D[i * W + j] = Math.min(diag, up, left);
+      }
+    }
+    let j = 0;
+    for (let k = 1; k <= m; k++) if (D[n * W + k] <= D[n * W + j]) j = k; // on a tie, pair the last typed word with a passage word
+    const ops = [];
+    let i = n;
+    while (i > 0) {
+      const c = D[i * W + j];
+      if (i > 0 && j > 0 && c === D[(i - 1) * W + j - 1] + (typ[i - 1] === ref[j - 1] ? 0 : 1)) {
+        ops.push({ op: typ[i - 1] === ref[j - 1] ? "ok" : "sub", e: refWords[j - 1], t: typWords[i - 1] });
+        i--; j--;
+      } else if (i > 0 && c === D[(i - 1) * W + j] + 1) {
+        ops.push({ op: "extra", t: typWords[i - 1] }); i--;
+      } else {
+        ops.push({ op: "miss", e: refWords[j - 1] }); j--;
+      }
+    }
+    return ops.reverse();
+  }
+
+  // ---------- dictionary (SCOWL word lists in words-en.js, loaded on first use) ----------
+  let dict = null;          // Map: lowercase word -> frequency tier (10 = most common)
+  let dictLoading = null;
+  const coreWord = (w) => w.replace(/[‘’]/g, "'").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "");
+  const getMyWords = () => new Set(store.get("myWords", []));
+  let myWords = getMyWords();
+
+  function loadDict() {
+    if (dict) return Promise.resolve(dict);
+    if (dictLoading) return dictLoading;
+    dictLoading = new Promise((resolve) => {
+      const build = () => {
+        const tiers = window.TD_WORDS;
+        if (!tiers) { dictLoading = null; resolve(null); return; }
+        const m = new Map();
+        Object.keys(tiers).sort((a, b) => a - b).forEach((t) => {
+          tiers[t].split(" ").forEach((w) => { w = w.toLowerCase(); if (w && !m.has(w)) m.set(w, +t); });
+        });
+        // Every word in the app's own passages is known too.
+        [...STORIES, ...PUNCT_STORIES, ...TOUGH_STORIES].forEach((s) => splitWords(s.text).forEach((w) => {
+          const c = coreWord(w).toLowerCase();
+          if (c && !m.has(c)) m.set(c, 50);
+        }));
+        dict = m;
+        resolve(m);
+      };
+      if (window.TD_WORDS) { build(); return; }
+      const s = document.createElement("script");
+      s.src = "words-en.js?v=4";
+      s.onload = build;
+      s.onerror = () => { dictLoading = null; resolve(null); };
+      document.head.appendChild(s);
+    });
+    return dictLoading;
+  }
+
+  // Common abbreviations: known words, and their full stop does not end a sentence.
+  const ABBR = new Set(["mr", "mrs", "ms", "dr", "prof", "st", "jr", "sr", "vs", "etc", "no", "nos", "sec", "secs", "art", "arts",
+    "govt", "hon", "ltd", "co", "inc", "pvt", "viz", "cf", "ch", "para", "paras", "vol", "pp", "adv", "hon'ble", "honble", "dept", "sq"]);
+  const endsSentence = (t) => {
+    if (!/[.?!]["')\]]*$/.test(t)) return false;
+    if (/[?!]["')\]]*$/.test(t)) return true;
+    const c = coreWord(t);
+    return !(ABBR.has(c.toLowerCase()) || /^([A-Za-z]\.)*[A-Za-z]$/.test(c));   // Mr. / e.g. / U.S. / A.
+  };
+
+  function isKnown(c) {
+    if (!c || /\d/.test(c)) return true;                    // numbers, dates, section 302
+    const l = c.toLowerCase();
+    if (dict.has(l) || myWords.has(l)) return true;
+    if (/^[A-Z]{2,}s?$/.test(c)) return true;                // acronyms: CPC, FIR, PPC
+    if (/^([A-Za-z]\.)+[A-Za-z]?$/.test(c)) return true;     // abbreviations: e.g, U.S
+    if (ABBR.has(l)) return true;                            // Mr, Dr, Govt, vs, etc
+    if (/'s$/i.test(c)) return isKnown(c.slice(0, -2));      // possessive
+    if (/^(can't|won't|shan't|ain't)$/.test(l)) return true;
+    const ct = l.match(/^(.+?)(n't|'ll|'re|'ve|'d|'m)$/);     // contractions: don't, they'll, I'm
+    if (ct) return dict.has(ct[1]);
+    if (c.includes("-")) return c.split("-").every((p) => !p || isKnown(p));
+    return false;
+  }
+
+  const ALPHA = "abcdefghijklmnopqrstuvwxyz";
+  function edits1(w) {
+    const out = new Set();
+    for (let i = 0; i <= w.length; i++) {
+      const a = w.slice(0, i), b = w.slice(i);
+      if (b) out.add(a + b.slice(1));                                   // missing letter
+      if (b.length > 1) out.add(a + b[1] + b[0] + b.slice(2));          // swapped letters
+      for (const ch of ALPHA) { if (b) out.add(a + ch + b.slice(1)); out.add(a + ch + b); }
+    }
+    out.delete(w);
+    return out;
+  }
+  const recase = (s, like) => (/^[A-Z]{2,}$/.test(like) ? s.toUpperCase() : /^[A-Z]/.test(like) ? s[0].toUpperCase() + s.slice(1) : s);
+
+  // Up to 3 dictionary words close to `c`, most likely first. Returns [{w, d}] (d = letters changed).
+  function suggest(c) {
+    const w = c.toLowerCase();
+    const found = new Map();
+    const add = (x, d) => {
+      const tier = dict.has(x) ? dict.get(x) : myWords.has(x) ? 40 : null;
+      if (tier == null) return;
+      const score = d * 100 + tier + (x[0] === w[0] ? 0 : 25);
+      if (!found.has(x) || found.get(x).score > score) found.set(x, { w: x, d, score });
+    };
+    const e1 = edits1(w);
+    e1.forEach((x) => add(x, 1));
+    if (!found.size && w.length <= 12) e1.forEach((x) => edits1(x).forEach((y) => { if (y !== w) add(y, 2); }));
+    // Two common words run together: "thegovernment" -> "the government"
+    const hasClose = [...found.values()].some((f) => f.d === 1);
+    for (let i = 1; i < w.length && !hasClose; i++) {
+      const a = w.slice(0, i), b = w.slice(i);
+      if ((a.length > 1 || a === "a") && b.length > 1 && dict.get(a) <= 35 && dict.get(b) <= 35) {
+        const k = `${a} ${b}`;
+        found.set(k, { w: k, d: 1, split: true, score: 140 + Math.max(dict.get(a), dict.get(b)) });
+      }
+    }
+    return [...found.values()].sort((x, y) => x.score - y.score).slice(0, 3).map((s) => ({ w: recase(s.w, c), d: s.d, split: !!s.split }));
+  }
+
+  // Check the typed text on its own (no original needed): spelling with suggestions,
+  // capitals, spaces around punctuation and repeated words.
+  const REPEAT_OK = new Set(["had", "that", "is", "do", "very"]);
+  function dictCheck(raw, byTimer) {
+    const toks = splitWords(raw);
+    const items = [];
+    let sentenceStart = true;
+    toks.forEach((t, i) => {
+      const it = { t, issues: [] };
+      items.push(it);
+      const isLast = i === toks.length - 1;
+      if (byTimer && isLast && !/\s$/.test(raw) && !isKnown(coreWord(t))) { it.cut = true; return; } // cut off by the timer
+      if (/^[,.;:!?]+$/.test(t)) {
+        if (i > 0) it.issues.push({ kind: "punct", hint: "No space before punctuation", fix: `${toks[i - 1]}${t}` });
+        it.punctOnly = true;
+        sentenceStart = /[.?!]$/.test(t);
+        return;
+      }
+      const c = coreWord(t);
+      if (c) {
+        if (sentenceStart && /^[a-z]/.test(c)) it.issues.push({ kind: "punct", hint: "Start a sentence with a capital letter", fix: recase(c, "A") });
+        else if (/^i($|')/.test(c)) it.issues.push({ kind: "punct", hint: "Write \"I\" as a capital letter", fix: "I" + c.slice(1) });
+        if (/[A-Za-z]{2}[,;:!?][A-Za-z]|[a-z]{2}\.[A-Za-z]{2}/.test(c)) it.issues.push({ kind: "punct", hint: "Add a space after punctuation", fix: c.replace(/([,;:!?.])(?=[A-Za-z]{2})/g, "$1 ") });
+        if (/([,;:!?])\1|[,;:][,.;:]/.test(t)) it.issues.push({ kind: "punct", hint: "Double punctuation", fix: t.replace(/([,.;:!?])[,.;:!?]+/g, "$1") });
+        const prev = i > 0 ? toks[i - 1] : "";
+        if (prev && !/[.?!,;:]$/.test(prev) && coreWord(prev).toLowerCase() === c.toLowerCase() && !REPEAT_OK.has(c.toLowerCase())) {
+          it.issues.push({ kind: "repeat", hint: "Same word typed twice", fix: "remove one" });
+        }
+        // Spell-check each part (a missing space can glue two words with punctuation).
+        c.split(/[,;:!?]|(?<=[a-z]{2})\.(?=[A-Za-z]{2})/).forEach((p) => {
+          p = coreWord(p);
+          if (!p || isKnown(p)) return;
+          const sug = suggest(p);
+          if (/^[A-Z]/.test(p) && !sentenceStart && !(sug.length && sug[0].d === 1 && !sug[0].split)) {
+            it.issues.push({ kind: "name", hint: "Not in the dictionary. A name? Please check it", word: p });
+          } else {
+            it.issues.push({ kind: "spell", hint: sug.length ? "Did you mean" : "Not in the dictionary", fix: sug.map((s) => s.w).join(", "), word: p });
+          }
+        });
+      }
+      sentenceStart = endsSentence(t);
+    });
+    return items;
+  }
+
+  function finishExam(byTimer) {
+    if (!exam || exam.done) return;
+    exam.done = true;
+    exam.endTime = exam.startTime + Math.min(exam.secs, examElapsed()) * 1000;
+    clearInterval(exam.timer);
+    examInput.disabled = true;
+    exam.raw = examInput.value;
+    exam.byTimer = byTimer;
+    if (!exam.started || !exam.raw.trim()) { toast("Kuch type nahi kiya. Exam dobara start karo."); examReset(); return; }
+    exam.id = newExamId();
+    exam.date = new Date().toISOString();
+    $("#examState").textContent = "Checking your typing…";
+    // Never leave the typist without a result: if the dictionary is slow to load or a check
+    // fails, fall back to a speed-only result.
+    const giveUp = new Promise((r) => setTimeout(r, 4000));
+    Promise.race([loadDict(), giveUp]).then(() => setTimeout(() => {
+      try {
+        const paper = matchPaper(exam.raw);
+        if (paper) analyseByOriginal(paper); else analyseByDict();
+      } catch (err) {
+        console.error("Exam check failed:", err);
+        showSpeedOnly();
+      }
+    }, 20));
+  }
+
+  function showSpeedOnly() {
+    exam.saved = true;
+    renderExamResult({
+      source: "none", net: null, gross: grossOf(exam.raw), acc: null, typedWords: splitWords(exam.raw).length,
+      tiles: [], review: esc(exam.raw), rows: [], practice: []
+    });
+  }
+
+  // Which saved exam paper (exam-papers.js) was the typist copying? Compared by shared word pairs,
+  // so the paper is found even with many mistakes. Returns null if none fits well enough.
+  const pairKeys = (text) => {
+    const w = splitWords(text).map((x) => cleanWord(wordKey(x))).filter(Boolean);
+    const out = new Set();
+    for (let i = 1; i < w.length; i++) out.add(w[i - 1] + " " + w[i]);
+    return out;
+  };
+  function matchPaper(raw) {
+    const papers = window.EXAM_PAPERS || [];
+    const typed = pairKeys(raw);
+    if (typed.size < 4) return null;
+    let best = null, bestScore = 0;
+    papers.forEach((p) => {
+      p.pairs = p.pairs || pairKeys(p.text);
+      let hit = 0;
+      typed.forEach((k) => { if (p.pairs.has(k)) hit++; });
+      const score = hit / typed.size;
+      if (score > bestScore) { bestScore = score; best = p; }
+    });
+    return bestScore >= 0.35 ? best : null;
+  }
+  const newExamId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+  const examMins = () => Math.max(examElapsed(), 1) / 60;
+  const grossOf = (raw) => Math.round(((raw.trim().length + 1) / 5) / examMins());
+
+  function analyseByDict() {
+    const raw = exam.raw;
+    if (!dict) { showSpeedOnly(); return; }
+    const items = dictCheck(raw, exam.byTimer);
+    const counted = (it) => it.issues.some((x) => x.kind !== "name");
+    const words = items.filter((it) => !it.cut && !it.punctOnly);
+    const clean = words.filter((it) => !counted(it));
+    const cnt = (k) => items.reduce((s, it) => s + it.issues.filter((x) => x.kind === k).length, 0);
+    const wrongWords = items.filter((it) => !it.cut && counted(it)).length;
+    const netChars = clean.reduce((s, it) => s + it.t.length + 1, 0);
+    const net = Math.round((netChars / 5) / examMins());
+    const acc = words.length ? (clean.length / (clean.length + wrongWords)) * 100 : 0;
+    const KIND_CLASS = { spell: "spell", punct: "punct", repeat: "extra", name: "name" };
+
+    const review = items.map((it) => {
+      if (it.cut) return `<span class="xw cut" title="Cut off by the timer, not counted">${esc(it.t)}</span>`;
+      if (!it.issues.length) return `<span class="xw ok">${esc(it.t)}</span>`;
+      const main = it.issues.find((x) => x.kind !== "name") || it.issues[0];
+      const title = it.issues.map((x) => `${HINT_LABEL[x.kind]}: ${x.hint}${x.fix ? ` → ${x.fix}` : ""}`).join("\n");
+      const fix = main.kind === "spell" ? (main.fix || "").split(", ")[0] : main.kind === "repeat" ? "" : main.fix || "";
+      return `<span class="xw ${KIND_CLASS[main.kind]}" title="${esc(title)}">${esc(it.t)}${fix ? `<sup>${esc(fix)}</sup>` : ""}</span>`;
+    }).join(" ");
+
+    const rows = [];
+    items.forEach((it) => it.issues.forEach((x) => rows.push({
+      kind: x.kind, typed: x.word || it.t,
+      hint: x.fix ? `${x.hint}: <b>${esc(x.fix)}</b>` : esc(x.hint),
+      addable: x.kind === "name" || x.kind === "spell" ? x.word : null
+    })));
+    const practice = items.flatMap((it) => it.issues.filter((x) => x.kind === "spell" && x.fix).map((x) => x.fix.split(", ")[0]))
+      .filter((w) => !w.includes(" "));
+
+    saveExamHistory(net, acc, wrongWords, practice);
+    renderExamResult({
+      source: "dict", net, gross: grossOf(raw), acc, typedWords: words.length,
+      tiles: [
+        [clean.length, "Correct words", "good"],
+        [cnt("spell"), "Spelling", "bad"],
+        [cnt("punct"), "Punctuation / capitals", "bad"],
+        [cnt("repeat"), "Repeated words", "bad"],
+        [cnt("name"), "Names to check (not counted)", "warn"]
+      ],
+      review, rows, practice, mistakes: wrongWords
+    });
+  }
+
+  function analyseByOriginal(paper) {
+    const ref = splitWords(paper.text);
+    exam.paper = paper.title;
+    if (!examName.value.trim()) exam.title = paper.title;
+    const raw = exam.raw, typ = splitWords(raw);
+    const ops = alignExam(ref, typ);
+    // A half-typed last word cut off by the timer is not a mistake: drop it.
+    if (exam.byTimer && !/\s$/.test(raw)) {
+      const last = ops[ops.length - 1];
+      if (last && last.op === "sub" && last.e.startsWith(last.t)) ops.pop();
+    }
+    // Leftover "skipped" words at the very end just mean the typist stopped there.
+    while (ops.length && ops[ops.length - 1].op === "miss") ops.pop();
+
+    const count = { ok: 0, spell: 0, wrong: 0, punct: 0, miss: 0, extra: 0 };
+    const mistakes = [];
+    let netChars = 0;
+    ops.forEach((o) => {
+      if (o.op === "ok") { count.ok++; netChars += o.e.length + 1; return; }
+      o.kind = o.op === "sub" ? mistakeKind(o.e, o.t) : o.op;
+      count[o.kind]++;
+      mistakes.push(o);
+    });
+    const net = Math.round((netChars / 5) / examMins());
+    const acc = count.ok + mistakes.length ? (count.ok / (count.ok + mistakes.length)) * 100 : 0;
+    const review = ops.map((o) => {
+      if (o.op === "ok") return `<span class="xw ok">${esc(o.t)}</span>`;
+      if (o.op === "extra") return `<span class="xw extra" title="Extra word, not in the passage">${esc(o.t)}</span>`;
+      if (o.op === "miss") return `<span class="xw miss" title="Skipped: you did not type this word">${esc(o.e)}</span>`;
+      return `<span class="xw ${o.kind}" title="${HINT_LABEL[o.kind]}. Expected: ${esc(o.e)}">${esc(o.t)}<sup>${esc(o.e)}</sup></span>`;
+    }).join(" ");
+    const rows = mistakes.map((m) => ({
+      kind: m.kind, typed: m.t || "",
+      hint: m.e ? `Expected: <b>${esc(m.e)}</b>` : "Not in the original: remove it"
+    }));
+    const practice = mistakes.filter((m) => m.e).map((m) => stripPunct(m.e));
+    saveExamHistory(net, acc, mistakes.length, practice);
+    renderExamResult({
+      source: "original", net, gross: grossOf(raw), acc, typedWords: typ.length,
+      tiles: [
+        [count.ok, "Correct words", "good"],
+        [count.spell, "Spelling", "bad"],
+        [count.wrong, "Wrong words", "bad"],
+        [count.punct, "Punctuation / capitals", "bad"],
+        [count.miss, "Skipped words", "bad"],
+        [count.extra, "Extra words", "bad"]
+      ],
+      review, rows, practice, mistakes: mistakes.length
+    });
+  }
+
+  // One history row per attempt; checking against the original later updates that same row.
+  function saveExamHistory(net, acc, wrong, missedWords) {
+    exam.saved = true;
+    const hist = store.get("history", []);
+    const entry = { date: exam.date, title: `Exam: ${exam.title}`, wpm: net, acc: +acc.toFixed(1), wrong, secs: Math.round(examElapsed()), examId: exam.id };
+    const i = hist.findIndex((h) => h.examId === exam.id);
+    if (i >= 0) hist[i] = entry; else hist.unshift(entry);
+    store.set("history", hist.slice(0, 20));
+    exam.missedAdded = exam.missedAdded || new Set();
+    const missed = store.get("missed", {});
+    missedWords.forEach((w) => {
+      const k = cleanWord(w);
+      if (k && !exam.missedAdded.has(k)) { exam.missedAdded.add(k); missed[k] = (missed[k] || 0) + 1; }
+    });
+    store.set("missed", missed);
+    touchUser();
+    updateGoal();
+  }
+
+  const HINT_LABEL = {
+    spell: "Spelling", wrong: "Wrong word", punct: "Punctuation / capital", miss: "Skipped word",
+    extra: "Extra word", repeat: "Repeated word", name: "Check"
+  };
+
+  function renderExamResult(r) {
+    $("#examLive").classList.add("hidden");
+    $("#examSetup").classList.add("hidden");
+    $("#examResult").classList.remove("hidden");
+    $("#xWpm").textContent = r.net == null ? "—" : r.net;
+    $("#xAcc").textContent = r.acc == null ? "—" : r.acc.toFixed(1) + "%";
+    $("#xGross").textContent = r.gross;
+    $("#xErr").textContent = r.mistakes == null ? "—" : r.mistakes;
+    $("#xHeading").textContent = exam.title;
+    const how = { dict: "Checked with the English dictionary", original: `Checked word by word against the paper “${exam.paper}”`, none: "Speed only" }[r.source];
+    $("#xSub").textContent = `${exam.byTimer ? "Time up" : "Submitted"} after ${fmtTime(examElapsed())} · ${r.typedWords} words · ${how}`;
+    const tgt = $("#xTarget");
+    if (r.acc == null) { tgt.textContent = "Speed only"; tgt.className = "badge"; }
+    else {
+      const speedOk = r.net >= goals.wpm, accOk = r.acc >= goals.acc;
+      if (speedOk && accOk) { tgt.textContent = `✔ Goal reached (${goals.wpm} WPM · ${goals.acc}%)`; tgt.className = "badge pass"; }
+      else if (!accOk) { tgt.textContent = `Accuracy below ${goals.acc}%`; tgt.className = "badge fail"; }
+      else { tgt.textContent = `${goals.wpm - r.net} WPM below goal`; tgt.className = "badge fail"; }
+    }
+    $("#xBreakdown").innerHTML = r.tiles.map(([n, l, cls]) =>
+      `<div class="xb ${cls === "good" ? "good" : n ? (cls === "warn" ? "warn" : "has") : ""}"><strong>${n}</strong><span>${l}</span></div>`).join("");
+    $("#xFormula").textContent = r.source === "dict"
+      ? "Accuracy = words with no mistake ÷ all words typed. A word with a spelling, capital-letter or punctuation mistake, or a repeated word, counts as wrong. Names the dictionary doesn't know are only flagged for you to check. (Your text did not match a saved exam paper, so it was checked with the dictionary.)"
+      : r.source === "original"
+        ? "Accuracy = correct words ÷ (correct words + every mistake). Spelling, wrong words, punctuation/capitals, skipped words and extra words each count as one mistake."
+        : "Accuracy could not be checked this time, so only speed is shown. Refresh the page (Ctrl+F5) and try again.";
+    $("#xLegendDict").classList.toggle("hidden", r.source !== "dict");
+    $("#xLegendOrig").classList.toggle("hidden", r.source !== "original");
+    $("#xReview").innerHTML = r.review;
+
+    $("#xMistakesCard").classList.toggle("hidden", !r.rows.length);
+    $("#xMistakesTitle").textContent = r.source === "dict" ? "Mistakes and hints" : "Mistakes";
+    $("#xMistakesSub").textContent = `${r.rows.length} item${r.rows.length === 1 ? "" : "s"}, in the order you typed them`;
+    $("#xMistakes thead").innerHTML = `<tr><th>Type</th><th>You typed</th><th>${r.source === "dict" ? "Hint" : "Correct"}</th>${r.source === "dict" ? "<th></th>" : ""}</tr>`;
+    $("#xMistakes tbody").innerHTML = r.rows.map((m) =>
+      `<tr><td><span class="tag kind-${m.kind}">${HINT_LABEL[m.kind]}</span></td><td>${m.typed ? esc(m.typed) : "<span class=\"muted\">—</span>"}</td><td>${m.hint}</td>${r.source === "dict" ? `<td class="num">${m.addable ? `<button class="btn btn-ghost btn-sm" data-addword="${esc(m.addable)}" title="This word is correct: stop flagging it">Add to my words</button>` : ""}</td>` : ""}</tr>`).join("");
+    $("#xMistakes tbody").querySelectorAll("[data-addword]").forEach((b) => b.addEventListener("click", () => {
+      const w = b.dataset.addword.toLowerCase();
+      const list = store.get("myWords", []);
+      if (!list.includes(w)) { list.push(w); store.set("myWords", list); }
+      myWords = getMyWords();
+      toast(`"${b.dataset.addword}" added to your words. Re-checking…`);
+      analyseByDict();
+    }));
+    exam.practice = [...new Set(r.practice.filter(Boolean))];
+    $("#xPractice").classList.toggle("hidden", !exam.practice.length);
+    // Open the results at the top so the score is the first thing you see.
+    $("#xAgain").focus({ preventScroll: true });
+    window.scrollTo(0, 0);
+    document.querySelector(".main").scrollTop = 0;
+  }
+
+  examInput.addEventListener("input", () => { if (exam && !exam.started && !exam.done && examInput.value.length) examBegin(); });
+  examInput.addEventListener("paste", (e) => { e.preventDefault(); toast("Inko copy mat karo! Paste allowed nahi hai."); });
+  examInput.addEventListener("drop", (e) => e.preventDefault());
+  examInput.addEventListener("copy", (e) => e.preventDefault());
+  $("#examSubmit").addEventListener("click", () => {
+    if (!examRunning()) return;
+    if (!confirm("Submit now? The remaining time will be skipped.")) return;
+    finishExam(false);
+  });
+  examName.addEventListener("input", () => { if (!exam || !exam.started) $("#examTitle").textContent = examTitle(); });
+  examName.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); examInput.focus(); } });
+  document.querySelectorAll("#examDur button").forEach((b) => b.addEventListener("click", () => {
+    if (examRunning()) return;
+    document.querySelectorAll("#examDur button").forEach((x) => x.classList.toggle("on", x === b));
+    examSecs = +b.dataset.v;
+    examReset();
+  }));
+  $("#xAgain").addEventListener("click", examReset);
+  $("#xPractice").addEventListener("click", () => practiceWords(exam.practice || [], "Drill: My exam mistakes"));
+  function stopExam() { if (exam) { clearInterval(exam.timer); exam.done = true; } }
+
   // ---------- text size ----------
   const typingCard = $("#typingCard");
   function applySize(sz) {
     typingCard.dataset.size = sz;
+    examCard.dataset.size = sz;
     document.querySelectorAll("#sizeSeg button").forEach((b) => b.classList.toggle("on", b.dataset.size === sz));
     if (session) requestAnimationFrame(() => setTimeout(scrollToCurrent, 170));
   }
@@ -947,6 +1488,7 @@
   // ---------- typing font ----------
   function applyFont(f) {
     typingCard.dataset.font = f;
+    examCard.dataset.font = f;
     document.querySelectorAll("#fontSeg button").forEach((b) => b.classList.toggle("on", b.dataset.font === f));
     if (session) requestAnimationFrame(() => setTimeout(scrollToCurrent, 50));
   }
@@ -966,13 +1508,15 @@
   const logo = $("#logoMark");
   const BASE_TITLE = "typingDrill by HAMiD";
   let pressT, typingT;
-  input.addEventListener("keydown", (e) => {
+  const pressLogo = (e) => {
     if (e.key.length !== 1 && e.key !== "Backspace") return;
     logo.classList.add("press", "typing");
     clearTimeout(pressT); clearTimeout(typingT);
     pressT = setTimeout(() => logo.classList.remove("press"), 90);
     typingT = setTimeout(() => logo.classList.remove("typing"), 1200);
-  });
+  };
+  input.addEventListener("keydown", pressLogo);
+  examInput.addEventListener("keydown", pressLogo);
   // Tab title shows live speed while a test runs, and the final score after.
   setInterval(() => {
     if (!session || !session.started) { document.title = BASE_TITLE; return; }
@@ -1167,7 +1711,7 @@
   }
 
   $("#signOutBtn").addEventListener("click", () => {
-    if (session && session.started && !session.finished && !confirm("A test is running. Sign out anyway?")) return;
+    if (((session && session.started && !session.finished) || examUnsaved()) && !confirm("A test is running. Sign out anyway?")) return;
     try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
     location.reload(); // clean slate: nothing from this profile stays in memory
   });
