@@ -54,5 +54,28 @@ I am inspired by the success of others.
 I am an open-minded person.
 Mistakes help me learn.
 I want to have a growth mindset till I am alive on this earth. You do not know the benefits of having this mindset, above I have just listed down some of the advantages, but if you research about it. You will find many reasons to have a growth mindset. It can help you in many ways.`
+  },
+  {
+    title: "Your success depends on your mindset",
+    text: `Your success depends on your mindset. Our mind is the most powerful asset we have. It doesn't matter how many successful people you have met or how educated you are. Your future will be created by how you think.
+By using your mind the right way, you can unlock the secrets of the millionaire mindset.
+If you want to grow and make your future, there is so much information available on the internet. But if you don't know which information to use, and if this information is correct or not. How will you identify? That's where the right mindset comes in.
+You are brainwashed from the day you were born.
+You have been programmed since you were a child. when you are like 5 or 6 years old you are told and fed with so much information from your school teachers, your culture, society, culture, TV, and media. You also get programmed by your parents because they also have been programmed through their parents.
+It's a cycle of manipulation, you can also call this a well-structured system, and we are all a part of it; the difference is we don't know it.
+We don't know what's happening around us if you want to get out of it. You have to be aware of what's going on in the world.
+Most people who are now wealthy know the system and they are aware of what's the next thing coming.
+You have to be prepared for everything. That's how you can break the cycle of manipulation. you are just a product of the wealthiest and they use you for their benefit. When you know and understand this then it will be easy for you to break the system of the manipulation.
+No one can manipulate a person with a strong and right mindset.
+The right mindset is your real asset, with the use of this you can become whatever you want.
+"Success is not an accident, success is a choice."
+-Stephen Curry
+Don't be a sheep and follow the crowd!
+If you want to be successful, don't be a sheep and follow the crowd. You must find out your way of thinking so that you can be different from the rest.
+You can't make any changes or progress unless you do things differently from the crowd. Everyone has their unique way of doing things.
+Every individual is somehow unique, but we all follow the same line from the start. This is why we forget our true potential. But you are not like everyone else, you are reading this book, and you have ways to be different; and get out of this wrong crowd.
+Your circle is important. If you are surrounded by people who have the same energy and mindset then your future will be great.
+Most people don't have a way to change their lives, so they just follow the same line blindly and go nowhere else.
+But you have decided to not follow the crowd. You are ready to change your mindset.`
   }
 ];
